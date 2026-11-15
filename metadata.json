@@ -1,0 +1,6 @@
+{
+  "name": "AnshTraX",
+  "description": "2D Indian tractor hill-climb, off-road, and cargo transport game featuring Eicher 241, Mahindra, and Sonalika tractors, 10 Indian maps, realistic trailer physics, and custom drivers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">AnshTraX</string>
+    <string name="tagline">Desi Tractor Hill Climb &amp; Cargo Hauler</string>
+    <string name="btn_play">DRIVE NOW</string>
+    <string name="btn_garage">GARAGE</string>
+    <string name="btn_maps">10 INDIAN MAPS</string>
+    <string name="btn_missions">MISSIONS</string>
+    <string name="btn_settings">AUDIO &amp; SETTINGS</string>
+    <string name="label_fuel">DIESEL</string>
+    <string name="label_speed">KM/H</string>
+    <string name="label_distance">DIST</string>
+    <string name="label_coins">COINS</string>
+    <string name="paused_title">GAME PAUSED</string>
+    <string name="game_over_fuel">OUT OF DIESEL!</string>
+    <string name="game_over_flipped">TRACTOR OVERTURNED!</string>
+    <string name="mission_complete_title">DELIVERY COMPLETE!</string>
+</resources>
