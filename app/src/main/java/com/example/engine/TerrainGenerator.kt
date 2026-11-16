@@ -13,7 +13,9 @@ import kotlin.random.Random
 data class TerrainPoint(
     val x: Float,
     val y: Float,
-    val surface: SurfaceType
+    val surface: SurfaceType,
+    val isMudTrap: Boolean = false,
+    val mudDepth: Float = 0f
 )
 
 data class CollectibleItem(
@@ -26,13 +28,19 @@ data class CollectibleItem(
 
 data class RoadsideProp(
     val x: Float,
-    val kind: Int, // 0..4 variant per map theme
+    val kind: Int, // 0..7 rich variant per map theme
+    val scale: Float
+)
+
+data class BackgroundLandmark(
+    val x: Float,
+    val kind: Int, // 0..3 distant parallax landmarks
     val scale: Float
 )
 
 class TerrainGenerator(
     private val map: MapEnvironment,
-    seed: Long = 108241L
+    seed: Long = (System.nanoTime() xor 0x5EED241L)
 ) {
     companion object {
         const val STEP_X = 1.2f // Fine 1.2m terrain segments for smooth tyre-road contact
@@ -41,7 +49,8 @@ class TerrainGenerator(
     private val rng = Random(seed + map.ordinal * 7919L)
     private val points = ArrayList<TerrainPoint>(512)
     val collectibles = ArrayList<CollectibleItem>(256)
-    val props = ArrayList<RoadsideProp>(256)
+    val props = ArrayList<RoadsideProp>(320)
+    val landmarks = ArrayList<BackgroundLandmark>(128)
     val checkpoints = ArrayList<Float>(64)
 
     private var nextCollectibleId = 1
@@ -49,6 +58,10 @@ class TerrainGenerator(
     private var nextCoinClusterX = 48f
     private var nextCheckpointX = 250f
     private var nextPropX = -10f
+    private var nextLandmarkX = -20f
+    private var nextMudTrapX = 44f + rng.nextFloat() * 34f
+    private var activeMudTrapEndX = -1f
+    private var activeMudTrapDepth = 0f
 
     // Smooth procedural wave accumulators
     private var lastY = 0f
@@ -77,74 +90,118 @@ class TerrainGenerator(
     private fun appendPoint(x: Float) {
         val y: Float
         val surface: SurfaceType
+        var isMudTrap = false
+        var mudDepth = 0f
 
         if (x <= 24f) {
             // Smooth flat launchpad for tractor + trailer spawn
             y = 0f
             surface = if (map.primarySurface == SurfaceType.MUD) SurfaceType.DIRT else map.primarySurface
         } else {
-            // Progressive difficulty scaling gently with distance
-            val distFactor = ((x - 24f) / 900f).coerceIn(0f, 1.35f)
-            val amp = map.hillAmplitude * (0.55f + 0.55f * distFactor)
-            val bump = map.bumpiness * (0.5f + 0.55f * distFactor)
+            // Progressive difficulty scaling with unmistakable rolling crests & dips ("unchi-neechi road")
+            val distFactor = ((x - 24f) / 750f).coerceIn(0f, 1.45f)
+            val amp = map.hillAmplitude * (0.95f + 0.65f * distFactor)
+            val bump = map.bumpiness * (0.78f + 0.60f * distFactor)
 
-            // Long sweeping terrain macro-hills + medium rollers + fine bumps
-            val w1 = sin((x * 0.026f) + phaseA) * amp * 0.55f
-            val w2 = sin((x * 0.068f) + phaseB) * amp * 0.30f
-            val w3 = cos((x * 0.155f) + phaseC) * (0.42f * bump)
-            val w4 = if (map == MapEnvironment.INDIAN_BAZAAR || map == MapEnvironment.CITY_OUTSKIRTS) {
-                // Periodic speed breakers / asphalt humps
-                val mod = x % 75f
-                if (mod in 36f..40f) sin(((mod - 36f) / 4f) * PI.toFloat()) * 0.28f else 0f
-            } else 0f
-
-            // Gradual gentle uphill bias on mountain/desert maps
-            if (map == MapEnvironment.MOUNTAIN_ROADS && x > 80f) {
-                slopeBias += 0.039f
-            } else if (map == MapEnvironment.DESERT && x > 80f) {
-                slopeBias += 0.009f * sin(x * 0.015f)
+            // Random sticky kichad bog traps where tyres can get stuck & slip until POWER mode pulls out
+            val trapEligible = map != MapEnvironment.DESERT
+            if (trapEligible && x >= nextMudTrapX && x > activeMudTrapEndX) {
+                val trapLen = 7.2f + rng.nextFloat() * 5.8f
+                activeMudTrapEndX = x + trapLen
+                activeMudTrapDepth = if (map.mudChance >= 0.25f) {
+                    0.74f + rng.nextFloat() * 0.26f
+                } else {
+                    0.56f + rng.nextFloat() * 0.34f
+                }
+                val gap = when {
+                    map.mudChance >= 0.35f -> 46f + rng.nextFloat() * 44f
+                    map.mudChance >= 0.15f -> 60f + rng.nextFloat() * 52f
+                    else -> 88f + rng.nextFloat() * 68f
+                }
+                nextMudTrapX = activeMudTrapEndX + gap
             }
 
-            // Smooth blend out of launchpad over first 20m
-            val blend = ((x - 24f) / 22f).coerceIn(0f, 1f)
-            val rawY = (w1 + w2 + w3 + w4 + slopeBias) * blend
+            val inRandomTrap = x <= activeMudTrapEndX && x >= 38f
+            val zoneHash = abs(sin(floor((x / 17f).toDouble()) * 12.9898)).toFloat()
+            surface = when {
+                inRandomTrap -> {
+                    isMudTrap = true
+                    mudDepth = activeMudTrapDepth
+                    SurfaceType.MUD
+                }
+                zoneHash < map.mudChance -> {
+                    mudDepth = if (map.hasRain) 0.35f else 0.45f
+                    if (map.hasRain) SurfaceType.WET else SurfaceType.MUD
+                }
+                map == MapEnvironment.CONSTRUCTION_AREA && zoneHash < 0.45f -> SurfaceType.ROCK
+                else -> map.primarySurface
+            }
 
-            // Clamp maximum step slope to guarantee physically traversable hills (no vertical walls)
+            // Long sweeping climbs + frequent medium unchi-neechi hills + rough country dips
+            val w1 = sin((x * 0.032f) + phaseA) * amp * 0.68f
+            val w2 = sin((x * 0.088f) + phaseB) * amp * 0.38f
+            val w3 = cos((x * 0.195f) + phaseC) * (0.56f * bump)
+            val w4 = if (map == MapEnvironment.INDIAN_BAZAAR || map == MapEnvironment.CITY_OUTSKIRTS) {
+                val mod = x % 70f
+                if (mod in 34f..38f) sin(((mod - 34f) / 4f) * PI.toFloat()) * 0.34f else 0f
+            } else 0f
+            // Natural sunken muddy dip so kichad sits visibly in low depressions of the road
+            val mudDip = when {
+                isMudTrap -> -0.46f * mudDepth
+                surface == SurfaceType.MUD || surface == SurfaceType.WET -> -0.28f
+                else -> 0f
+            }
+
+            // Gradual uphill bias on mountain/desert maps
+            if (map == MapEnvironment.MOUNTAIN_ROADS && x > 70f) {
+                slopeBias += 0.042f
+            } else if (map == MapEnvironment.DESERT && x > 70f) {
+                slopeBias += 0.012f * sin(x * 0.016f)
+            }
+
+            // Smooth blend out of flat launchpad over first 14m
+            val blend = ((x - 24f) / 14f).coerceIn(0f, 1f)
+            val rawY = (w1 + w2 + w3 + w4 + mudDip + slopeBias) * blend
+
+            // Clamp maximum step slope to guarantee steep yet physically climbable unchi-neechi hills
             val maxStepDy = when (map) {
-                MapEnvironment.MOUNTAIN_ROADS -> 0.68f
-                MapEnvironment.CONSTRUCTION_AREA -> 0.62f
-                else -> 0.54f
+                MapEnvironment.MOUNTAIN_ROADS -> 0.88f
+                MapEnvironment.CONSTRUCTION_AREA -> 0.82f
+                else -> 0.74f
             }
             val dy = (rawY - lastY).coerceIn(-maxStepDy, maxStepDy)
             y = lastY + dy
             lastY = y
-
-            // Surface zone assignment (mud/puddles/rocky patches)
-            val zoneHash = abs(sin(floor((x / 22f).toDouble()) * 12.9898)).toFloat()
-            surface = when {
-                zoneHash < map.mudChance -> if (map.hasRain) SurfaceType.WET else SurfaceType.MUD
-                map == MapEnvironment.CONSTRUCTION_AREA && zoneHash < 0.45f -> SurfaceType.ROCK
-                else -> map.primarySurface
-            }
         }
 
-        points.add(TerrainPoint(x, y, surface))
+        points.add(TerrainPoint(x, y, surface, isMudTrap, mudDepth))
 
-        // Spawn props, coins, fuel, checkpoints deterministically ahead
+        // Spawn roadside props, midground parallax landmarks, coins, fuel, checkpoints
         if (x >= nextPropX) {
             props.add(
                 RoadsideProp(
                     x = x,
-                    kind = rng.nextInt(5),
-                    scale = 0.85f + rng.nextFloat() * 0.4f
+                    kind = rng.nextInt(8),
+                    scale = 0.85f + rng.nextFloat() * 0.45f
                 )
             )
             nextPropX = x + when (map) {
-                MapEnvironment.FOREST -> 10f + rng.nextFloat() * 10f
-                MapEnvironment.INDIAN_BAZAAR, MapEnvironment.CITY_OUTSKIRTS -> 14f + rng.nextFloat() * 12f
-                MapEnvironment.DESERT -> 22f + rng.nextFloat() * 24f
-                else -> 15f + rng.nextFloat() * 16f
+                MapEnvironment.FOREST -> 7.5f + rng.nextFloat() * 8f
+                MapEnvironment.INDIAN_BAZAAR, MapEnvironment.CITY_OUTSKIRTS -> 10f + rng.nextFloat() * 9f
+                MapEnvironment.DESERT -> 16f + rng.nextFloat() * 18f
+                else -> 9.5f + rng.nextFloat() * 11f
             }
+        }
+
+        if (x >= nextLandmarkX) {
+            landmarks.add(
+                BackgroundLandmark(
+                    x = x,
+                    kind = rng.nextInt(4),
+                    scale = 0.9f + rng.nextFloat() * 0.55f
+                )
+            )
+            nextLandmarkX = x + 30f + rng.nextFloat() * 26f
         }
 
         if (x >= nextFuelX) {
@@ -203,6 +260,16 @@ class TerrainGenerator(
         if (points.isEmpty()) return map.primarySurface
         val idx = getPointIndex(x)
         return points[idx].surface
+    }
+
+    fun isMudTrapAt(x: Float): Boolean {
+        if (points.isEmpty()) return false
+        return points[getPointIndex(x)].isMudTrap
+    }
+
+    fun mudDepthAt(x: Float): Float {
+        if (points.isEmpty()) return 0f
+        return points[getPointIndex(x)].mudDepth
     }
 
     /** Returns outward unit normal (nx, ny) pointing UP from terrain (world +Y is UP) */

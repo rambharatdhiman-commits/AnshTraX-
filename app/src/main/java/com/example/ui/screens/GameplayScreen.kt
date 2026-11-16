@@ -123,7 +123,7 @@ fun GameplayScreen(
         TractorArtAssets.load(context.resources, world.tractor, world.driver)
     }
 
-    var hud by remember(world) { mutableStateOf(world.snapshotHud()) }
+    val hudState = remember(world) { mutableStateOf(world.snapshotHud()) }
     val frameTickState = remember(world) { mutableLongStateOf(0L) }
     val elapsedVisualRef = remember(world) { floatArrayOf(0f) }
 
@@ -132,13 +132,7 @@ fun GameplayScreen(
     var handbrakePressed by remember(world) { mutableStateOf(false) }
     var powerModeOn by remember(world) { mutableStateOf(world.powerModeInput) }
 
-    // Keep live inputs synced into PhysicsWorld on initial/recomposed frame as fallback
-    world.throttleInput = if (gasPressed) 1f else 0f
-    world.brakeInput = if (brakePressed) 1f else 0f
-    world.handbrakeInput = handbrakePressed
-    world.powerModeInput = powerModeOn
-
-    // 60fps Game Loop — ONLY invalidates WorldCanvas DrawScope at 60fps; HUD throttled to ~12Hz!
+    // 60fps Game Loop — ONLY invalidates WorldCanvas DrawScope at 60fps; HUD isolated at ~10Hz!
     LaunchedEffect(world) {
         var lastNs = withFrameNanos { it }
         var hudAccumSec = 0f
@@ -153,11 +147,11 @@ fun GameplayScreen(
             frameTickState.longValue++
 
             hudAccumSec += dt
-            if (hudAccumSec >= 0.085f || world.phase != lastPhase) {
+            if (hudAccumSec >= 0.095f || world.phase != lastPhase) {
                 hudAccumSec = 0f
                 lastPhase = world.phase
                 val snap = world.snapshotHud()
-                hud = snap
+                hudState.value = snap
                 if (snap.phase == RunPhase.GAME_OVER || snap.phase == RunPhase.MISSION_COMPLETE) {
                     onRunFinished(world)
                 }
@@ -182,228 +176,23 @@ fun GameplayScreen(
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // TOP HUD BAR
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top
-            ) {
-                // Top-Left: Driver Avatar + Tractor + Map/Surface
-                Surface(
-                    color = DieselCharcoal.copy(alpha = 0.80f),
-                    shape = RoundedCornerShape(12.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, SteelBorder)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Image(
-                            painter = painterResource(id = world.driver.faceDrawable),
-                            contentDescription = world.driver.displayName,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clip(CircleShape)
-                                .border(1.5.dp, HarvestGold, CircleShape)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(
-                                text = "${world.tractor.displayName} • ${world.driver.displayName}",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = CreamInk
-                            )
-                            Text(
-                                text = "${world.map.displayName} (${hud.currentSurface.name})",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = HarvestGold
-                            )
-                        }
-                    }
-                }
-
-                // Top-Center: Fuel, Distance, Coins & Optional Mission Progress
-                Surface(
-                    color = DieselCharcoal.copy(alpha = 0.82f),
-                    shape = RoundedCornerShape(12.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, SteelBorder)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            // Fuel Bar
-                            val fuelFrac = (hud.fuel / hud.maxFuel).coerceIn(0f, 1f)
-                            val fuelColor = when {
-                                fuelFrac < 0.22f -> DangerRed
-                                fuelFrac < 0.45f -> WarningOrange
-                                else -> CropEmerald
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.LocalGasStation, contentDescription = "Fuel", tint = fuelColor, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(5.dp))
-                                LinearProgressIndicator(
-                                    progress = { fuelFrac },
-                                    color = fuelColor,
-                                    trackColor = SteelBorder,
-                                    modifier = Modifier
-                                        .width(96.dp)
-                                        .height(9.dp)
-                                        .clip(RoundedCornerShape(5.dp))
-                                )
-                            }
-
-                            Text(
-                                text = "${hud.distanceMeters} m",
-                                style = MaterialTheme.typography.titleLarge,
-                                color = CreamInk
-                            )
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.MonetizationOn, contentDescription = "Coins", tint = HarvestGold, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text("+${hud.coinsEarned}", style = MaterialTheme.typography.titleMedium, color = HarvestGold)
-                            }
-                        }
-
-                        // Mission progress bar
-                        world.mission?.let { m ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    text = "${m.title}: ${hud.distanceMeters}/${m.targetDistanceMeters}m",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = CropEmerald
-                                )
-                                LinearProgressIndicator(
-                                    progress = { hud.missionProgressPct },
-                                    color = CropEmerald,
-                                    trackColor = SteelBorder,
-                                    modifier = Modifier
-                                        .width(90.dp)
-                                        .height(6.dp)
-                                        .clip(RoundedCornerShape(3.dp))
-                                )
-                                hud.timeRemainingSec?.let { t ->
-                                    Text(
-                                        text = "${t}s",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = if (t <= 15) DangerRed else HarvestGold
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Top-Right: Analog + Digital Tractor Instrument Cluster + Audio + Pause
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    TractorInstrumentCluster(
-                        speedKmh = hud.speedKmh,
-                        rpm = hud.rpm,
-                        gear = hud.gear
-                    )
-
-                    IconButton(
-                        onClick = onToggleSfx,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(DieselCharcoal.copy(alpha = 0.82f))
-                            .border(1.dp, SteelBorder, CircleShape)
-                            .testTag("hud_sfx_button")
-                    ) {
-                        Icon(
-                            imageVector = if (progress.sfxEnabled) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
-                            contentDescription = "Toggle Sound",
-                            tint = if (progress.sfxEnabled) CropEmerald else MutedWheat
-                        )
-                    }
-
-                    IconButton(
-                        onClick = onPause,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(TractorCrimson.copy(alpha = 0.92f))
-                            .border(1.5.dp, HarvestGold, CircleShape)
-                            .testTag("pause_button")
-                    ) {
-                        Icon(Icons.Default.Pause, contentDescription = "Pause", tint = CreamInk)
-                    }
-                }
-            }
+            // TOP HUD BAR (isolated composable so HUD ticks do NOT recompose pedals/root!)
+            GameplayTopHudBar(
+                world = world,
+                hudState = hudState,
+                sfxEnabled = progress.sfxEnabled,
+                onToggleSfx = onToggleSfx,
+                onPause = onPause
+            )
 
             // Center Notification Banners (Checkpoint / Unloading / Low Fuel)
-            Box(
+            GameplayCenterBanners(
+                world = world,
+                hudState = hudState,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.TopCenter
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(top = 10.dp)
-                ) {
-                    AnimatedVisibility(
-                        visible = hud.checkpointBannerTimer > 0f,
-                        enter = fadeIn(),
-                        exit = fadeOut()
-                    ) {
-                        Surface(
-                            color = CropEmerald,
-                            shape = RoundedCornerShape(20.dp),
-                            border = androidx.compose.foundation.BorderStroke(2.dp, CreamInk)
-                        ) {
-                            Text(
-                                text = "CHECKPOINT ${hud.lastCheckpointMeters}m! +60 COINS & +25% DIESEL",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = DieselCharcoal,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                            )
-                        }
-                    }
-
-                    if (hud.phase == RunPhase.UNLOADING) {
-                        Surface(
-                            color = HarvestGold,
-                            shape = RoundedCornerShape(20.dp),
-                            border = androidx.compose.foundation.BorderStroke(2.dp, DieselCharcoal)
-                        ) {
-                            Text(
-                                text = "DESTINATION REACHED! UNLOADING ${world.cargo.displayName.uppercase()}...",
-                                style = MaterialTheme.typography.titleLarge,
-                                color = DieselCharcoal,
-                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
-                            )
-                        }
-                    } else if (hud.fuel <= hud.maxFuel * 0.18f && hud.fuel > 0f) {
-                        Surface(
-                            color = DangerRed.copy(alpha = 0.9f),
-                            shape = RoundedCornerShape(14.dp)
-                        ) {
-                            Text(
-                                text = "LOW DIESEL! GRAB A GREEN CAN!",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = CreamInk,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-                }
-            }
+                    .weight(1f)
+            )
 
             // BOTTOM LANDSCAPE TRANSPARENT TOUCH PEDALS & SWITCHES
             Row(
@@ -453,6 +242,7 @@ fun GameplayScreen(
                 ) {
                     PowerBoostToggleButton(
                         isEnabled = powerModeOn,
+                        hudState = hudState,
                         modifier = Modifier
                             .width(74.dp)
                             .height(64.dp)
@@ -482,40 +272,329 @@ fun GameplayScreen(
             }
         }
 
-        // 3. Pause / Game Over / Mission Complete Overlays
-        when (hud.phase) {
-            RunPhase.PAUSED -> {
-                PauseMenuOverlay(
-                    musicEnabled = progress.musicEnabled,
-                    sfxEnabled = progress.sfxEnabled,
-                    onResume = onResume,
-                    onRestart = onRestart,
-                    onGarage = onOpenGarage,
-                    onExitMenu = onExitMenu,
-                    onToggleMusic = onToggleMusic,
-                    onToggleSfx = onToggleSfx
+        // 3. Pause / Game Over / Mission Complete Overlays (isolated composable)
+        GameplayPhaseOverlays(
+            world = world,
+            hudState = hudState,
+            musicEnabled = progress.musicEnabled,
+            sfxEnabled = progress.sfxEnabled,
+            onResume = onResume,
+            onRestart = onRestart,
+            onOpenGarage = onOpenGarage,
+            onExitMenu = onExitMenu,
+            onToggleMusic = onToggleMusic,
+            onToggleSfx = onToggleSfx
+        )
+    }
+}
+
+@Composable
+private fun GameplayTopHudBar(
+    world: PhysicsWorld,
+    hudState: State<HudSnapshot>,
+    sfxEnabled: Boolean,
+    onToggleSfx: () -> Unit,
+    onPause: () -> Unit
+) {
+    val hud = hudState.value
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top
+    ) {
+        Surface(
+            color = DieselCharcoal.copy(alpha = 0.80f),
+            shape = RoundedCornerShape(12.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, SteelBorder)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Image(
+                    painter = painterResource(id = world.driver.faceDrawable),
+                    contentDescription = world.driver.displayName,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .border(1.5.dp, HarvestGold, CircleShape)
                 )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column {
+                    Text(
+                        text = "${world.tractor.displayName} • ${world.driver.displayName}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = CreamInk
+                    )
+                    Text(
+                        text = "${world.map.displayName} (${hud.currentSurface.name})",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = HarvestGold
+                    )
+                }
             }
-            RunPhase.GAME_OVER -> {
-                GameOverOverlay(
-                    hud = hud,
-                    world = world,
-                    onRetry = onRestart,
-                    onGarage = onOpenGarage,
-                    onExitMenu = onExitMenu
-                )
-            }
-            RunPhase.MISSION_COMPLETE -> {
-                MissionCompleteOverlay(
-                    hud = hud,
-                    world = world,
-                    onReplay = onRestart,
-                    onGarage = onOpenGarage,
-                    onExitMenu = onExitMenu
-                )
-            }
-            else -> Unit
         }
+
+        Surface(
+            color = DieselCharcoal.copy(alpha = 0.82f),
+            shape = RoundedCornerShape(12.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, SteelBorder)
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    val fuelFrac = (hud.fuel / hud.maxFuel).coerceIn(0f, 1f)
+                    val fuelColor = when {
+                        fuelFrac < 0.22f -> DangerRed
+                        fuelFrac < 0.45f -> WarningOrange
+                        else -> CropEmerald
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.LocalGasStation, contentDescription = "Fuel", tint = fuelColor, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        LinearProgressIndicator(
+                            progress = { fuelFrac },
+                            color = fuelColor,
+                            trackColor = SteelBorder,
+                            modifier = Modifier
+                                .width(96.dp)
+                                .height(9.dp)
+                                .clip(RoundedCornerShape(5.dp))
+                        )
+                    }
+
+                    Text(
+                        text = "${hud.distanceMeters} m",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = CreamInk
+                    )
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.MonetizationOn, contentDescription = "Coins", tint = HarvestGold, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("+${hud.coinsEarned}", style = MaterialTheme.typography.titleMedium, color = HarvestGold)
+                    }
+                }
+
+                world.mission?.let { m ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "${m.title}: ${hud.distanceMeters}/${m.targetDistanceMeters}m",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CropEmerald
+                        )
+                        LinearProgressIndicator(
+                            progress = { hud.missionProgressPct },
+                            color = CropEmerald,
+                            trackColor = SteelBorder,
+                            modifier = Modifier
+                                .width(90.dp)
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                        )
+                        hud.timeRemainingSec?.let { t ->
+                            Text(
+                                text = "${t}s",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (t <= 15) DangerRed else HarvestGold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            TractorInstrumentCluster(
+                speedKmh = hud.speedKmh,
+                rpm = hud.rpm,
+                gear = hud.gear
+            )
+
+            IconButton(
+                onClick = onToggleSfx,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(DieselCharcoal.copy(alpha = 0.82f))
+                    .border(1.dp, SteelBorder, CircleShape)
+                    .testTag("hud_sfx_button")
+            ) {
+                Icon(
+                    imageVector = if (sfxEnabled) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
+                    contentDescription = "Toggle Sound",
+                    tint = if (sfxEnabled) CropEmerald else MutedWheat
+                )
+            }
+
+            IconButton(
+                onClick = onPause,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(TractorCrimson.copy(alpha = 0.92f))
+                    .border(1.5.dp, HarvestGold, CircleShape)
+                    .testTag("pause_button")
+            ) {
+                Icon(Icons.Default.Pause, contentDescription = "Pause", tint = CreamInk)
+            }
+        }
+    }
+}
+
+@Composable
+private fun GameplayCenterBanners(
+    world: PhysicsWorld,
+    hudState: State<HudSnapshot>,
+    modifier: Modifier = Modifier
+) {
+    val hud = hudState.value
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(top = 10.dp)
+        ) {
+            AnimatedVisibility(
+                visible = hud.checkpointBannerTimer > 0f,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Surface(
+                    color = CropEmerald,
+                    shape = RoundedCornerShape(20.dp),
+                    border = androidx.compose.foundation.BorderStroke(2.dp, CreamInk)
+                ) {
+                    Text(
+                        text = "CHECKPOINT ${hud.lastCheckpointMeters}m! +60 COINS & +25% DIESEL",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = DieselCharcoal,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                    )
+                }
+            }
+
+            if (hud.phase == RunPhase.UNLOADING) {
+                Surface(
+                    color = HarvestGold,
+                    shape = RoundedCornerShape(20.dp),
+                    border = androidx.compose.foundation.BorderStroke(2.dp, DieselCharcoal)
+                ) {
+                    Text(
+                        text = "DESTINATION REACHED! UNLOADING ${world.cargo.displayName.uppercase()}...",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = DieselCharcoal,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
+                    )
+                }
+            } else {
+                if (hud.tiltDanger > 0.22f) {
+                    Surface(
+                        color = DangerRed.copy(alpha = 0.92f),
+                        shape = RoundedCornerShape(16.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.5.dp, CreamInk)
+                    ) {
+                        Text(
+                            text = "TILT DANGER! BALANCE TRACTOR!",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = CreamInk,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+                        )
+                    }
+                }
+                if (hud.isStuckInMud) {
+                    Surface(
+                        color = Color(0xFF4A2A0E).copy(alpha = 0.92f),
+                        shape = RoundedCornerShape(16.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.8.dp, HarvestGold)
+                    ) {
+                        Text(
+                            text = "TYRES STUCK IN KICHAD! TAP POWER TO PULL OUT",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = HarvestGold,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+                        )
+                    }
+                } else if (hud.fuel <= hud.maxFuel * 0.18f && hud.fuel > 0f) {
+                    Surface(
+                        color = DangerRed.copy(alpha = 0.9f),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text(
+                            text = "LOW DIESEL! GRAB A GREEN CAN!",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = CreamInk,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GameplayPhaseOverlays(
+    world: PhysicsWorld,
+    hudState: State<HudSnapshot>,
+    musicEnabled: Boolean,
+    sfxEnabled: Boolean,
+    onResume: () -> Unit,
+    onRestart: () -> Unit,
+    onOpenGarage: () -> Unit,
+    onExitMenu: () -> Unit,
+    onToggleMusic: () -> Unit,
+    onToggleSfx: () -> Unit
+) {
+    val hud = hudState.value
+    when (hud.phase) {
+        RunPhase.PAUSED -> {
+            PauseMenuOverlay(
+                musicEnabled = musicEnabled,
+                sfxEnabled = sfxEnabled,
+                onResume = onResume,
+                onRestart = onRestart,
+                onGarage = onOpenGarage,
+                onExitMenu = onExitMenu,
+                onToggleMusic = onToggleMusic,
+                onToggleSfx = onToggleSfx
+            )
+        }
+        RunPhase.GAME_OVER -> {
+            GameOverOverlay(
+                hud = hud,
+                world = world,
+                onRetry = onRestart,
+                onGarage = onOpenGarage,
+                onExitMenu = onExitMenu
+            )
+        }
+        RunPhase.MISSION_COMPLETE -> {
+            MissionCompleteOverlay(
+                hud = hud,
+                world = world,
+                onReplay = onRestart,
+                onGarage = onOpenGarage,
+                onExitMenu = onExitMenu
+            )
+        }
+        else -> Unit
     }
 }
 
@@ -813,9 +892,11 @@ private fun RealisticDashSwitch(
 @Composable
 private fun PowerBoostToggleButton(
     isEnabled: Boolean,
+    hudState: State<HudSnapshot>,
     modifier: Modifier = Modifier,
     onToggle: (Boolean) -> Unit
 ) {
+    val needsPowerHint = hudState.value.isStuckInMud && !isEnabled
     val latestEnabled by rememberUpdatedState(isEnabled)
     val latestOnToggle by rememberUpdatedState(onToggle)
     Box(
@@ -824,7 +905,7 @@ private fun PowerBoostToggleButton(
                 var fingerWasDown = false
                 awaitPointerEventScope {
                     while (true) {
-                        val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Main)
+                        val event = awaitPointerEvent(PointerEventPass.Main)
                         val anyDown = event.changes.any { it.pressed }
                         if (anyDown && !fingerWasDown) {
                             fingerWasDown = true
@@ -845,11 +926,18 @@ private fun PowerBoostToggleButton(
                 .fillMaxSize()
                 .clip(RoundedCornerShape(14.dp))
                 .background(
-                    if (isEnabled) WarningOrange.copy(alpha = 0.42f) else DieselCharcoal.copy(alpha = 0.24f)
+                    when {
+                        isEnabled -> WarningOrange.copy(alpha = 0.44f)
+                        needsPowerHint -> HarvestGold.copy(alpha = 0.34f)
+                        else -> DieselCharcoal.copy(alpha = 0.24f)
+                    }
                 )
                 .border(
-                    width = if (isEnabled) 2.2.dp else 1.4.dp,
-                    color = if (isEnabled) HarvestGold else CreamInk.copy(alpha = 0.44f),
+                    width = if (isEnabled || needsPowerHint) 2.4.dp else 1.4.dp,
+                    color = when {
+                        isEnabled || needsPowerHint -> HarvestGold
+                        else -> CreamInk.copy(alpha = 0.44f)
+                    },
                     shape = RoundedCornerShape(14.dp)
                 ),
             contentAlignment = Alignment.Center
@@ -858,13 +946,17 @@ private fun PowerBoostToggleButton(
                 Icon(
                     imageVector = Icons.Default.Bolt,
                     contentDescription = "Tractor Power Boost",
-                    tint = if (isEnabled) HarvestGold else CreamInk.copy(alpha = 0.90f),
+                    tint = if (isEnabled || needsPowerHint) HarvestGold else CreamInk.copy(alpha = 0.90f),
                     modifier = Modifier.size(22.dp)
                 )
                 Text(
-                    text = if (isEnabled) "PWR ON" else "POWER",
+                    text = when {
+                        isEnabled -> "PWR ON"
+                        needsPowerHint -> "TAP PWR!"
+                        else -> "POWER"
+                    },
                     style = MaterialTheme.typography.labelLarge.copy(fontSize = 10.sp),
-                    color = if (isEnabled) HarvestGold else CreamInk.copy(alpha = 0.92f)
+                    color = if (isEnabled || needsPowerHint) HarvestGold else CreamInk.copy(alpha = 0.92f)
                 )
             }
         }

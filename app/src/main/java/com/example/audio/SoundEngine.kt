@@ -359,9 +359,12 @@ class SoundEngine(context: Context? = null) {
             for (i in 0 until chunkSamples) {
                 var sample = 0f
 
-                smoothedRpm += (engineRpm - smoothedRpm) * 0.00065f
-                smoothedSpeed += (vehicleSpeed - smoothedSpeed) * 0.0012f
-                smoothedThrottle += (throttle - smoothedThrottle) * 0.0009f
+                // Slow progressive pickup buildup on accelerator press; swift coast-down on release
+                val rpmAlpha = if (engineRpm > smoothedRpm) 0.00032f else 0.0046f
+                val throtAlpha = if (throttle > smoothedThrottle) 0.00045f else 0.0052f
+                smoothedRpm += (engineRpm - smoothedRpm) * rpmAlpha
+                smoothedSpeed += (vehicleSpeed - smoothedSpeed) * 0.0014f
+                smoothedThrottle += (throttle - smoothedThrottle) * throtAlpha
 
                 // Duck engine briefly during real Eicher starter cranking so cranking -> idle catch is clean
                 var starterEngineDuck = 1f

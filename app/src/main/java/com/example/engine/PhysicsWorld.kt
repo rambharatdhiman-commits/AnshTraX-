@@ -77,7 +77,11 @@ data class HudSnapshot(
     val checkpointBannerTimer: Float = 0f,
     val lastCheckpointMeters: Int = 0,
     val driverLean: Float = 0f,
-    val currentSurface: SurfaceType = SurfaceType.DIRT
+    val currentSurface: SurfaceType = SurfaceType.DIRT,
+    val isStuckInMud: Boolean = false,
+    val mudBogLevel: Float = 0f,
+    val tyreSlipRatio: Float = 0f,
+    val tiltDanger: Float = 0f
 )
 
 class PhysicsWorld(
@@ -88,9 +92,10 @@ class PhysicsWorld(
     val map: MapEnvironment,
     val upgrades: TractorUpgrades,
     val mission: MissionDef?,
-    private val soundEngine: SoundEngine?
+    private val soundEngine: SoundEngine?,
+    terrainSeed: Long = (System.nanoTime() xor 0x5EED241L)
 ) {
-    val terrain = TerrainGenerator(map)
+    val terrain = TerrainGenerator(map, terrainSeed)
     private val rng = Random(System.currentTimeMillis())
 
     @Volatile var throttleInput: Float = 0f
@@ -135,12 +140,19 @@ class PhysicsWorld(
     var frontWheelCompression: Float = restLen
     var rearWheelRot: Float = 0f
     var frontWheelRot: Float = 0f
+    var rearWheelOmega: Float = 0f
+    var frontWheelOmega: Float = 0f
     var rearWheelGrounded: Boolean = true
     var frontWheelGrounded: Boolean = true
     var engineRpm: Float = 620f
     var currentGear: Int = 1
     var driverLean: Float = 0f
     var currentSurface: SurfaceType = map.primarySurface
+    var isStuckInMud: Boolean = false
+    var mudBogLevel: Float = 0f
+    var tyreSlipRatio: Float = 0f
+    var chassisMudCoat: Float = 0f
+    var tiltDanger: Float = 0f
 
     val hasTrailer: Boolean = trailer != TrailerType.NONE
     var trX: Float = 0f
@@ -205,12 +217,12 @@ class PhysicsWorld(
         brakeMult = tractor.baseBraking * (1f + (brkLvl - 1) * 0.15f)
         maxSpeedMs = tractor.baseMaxSpeed * (1f + (engLvl - 1) * 0.08f)
 
-        // Compute exact silencer mouth & drawbar hitch offsets from sprite proportions
-        // Hitch vertical height (hNy) aligns cleanly with tractor rear tyre center (rNy)
+        // Compute exact silencer mouth & raised drawbar hitch offsets from sprite proportions
+        // Hitch vertical height sits cleanly above rear axle hub so drawbar connects high & straight
         val coords = when (tractor) {
-            TractorModel.EICHER_241 -> floatArrayOf(0.315f, 0.677f, 0.774f, 0.635f, 0.063f, 0.105f, 0.677f)
-            TractorModel.MAHINDRA_575 -> floatArrayOf(0.243f, 0.701f, 0.753f, 0.670f, 0.115f, 0.018f, 0.701f)
-            TractorModel.SONALIKA_750 -> floatArrayOf(0.242f, 0.690f, 0.757f, 0.644f, 0.040f, 0.022f, 0.690f)
+            TractorModel.EICHER_241 -> floatArrayOf(0.315f, 0.677f, 0.774f, 0.635f, 0.063f, 0.095f, 0.641f)
+            TractorModel.MAHINDRA_575 -> floatArrayOf(0.243f, 0.701f, 0.753f, 0.670f, 0.115f, 0.015f, 0.665f)
+            TractorModel.SONALIKA_750 -> floatArrayOf(0.242f, 0.690f, 0.757f, 0.644f, 0.040f, 0.018f, 0.654f)
         }
         val rNx = coords[0]
         val rNy = coords[1]
@@ -230,7 +242,7 @@ class PhysicsWorld(
 
         val restTractorY = 0.05f + tractor.rearWheelRadius + restLen
         val restTrailerY = 0.05f + trailer.wheelRadius + restLen
-        tongueLocalY = ((restTractorY + hitchLocalY) - restTrailerY).coerceIn(-0.42f, 0.12f)
+        tongueLocalY = ((restTractorY + hitchLocalY) - restTrailerY).coerceIn(-0.22f, 0.25f)
 
         if (hasTrailer) {
             trX = x + hitchLocalX - tongueLocalX
@@ -347,8 +359,10 @@ class PhysicsWorld(
         val frontDamperC = massT * 5.4f * sqrt(suspMult)
 
         val rawThrottle = if (fuel > 0f) throttleInput else 0f
-        smoothedThrottle += (rawThrottle - smoothedThrottle) * min(1f, dt * 4.5f)
-        smoothedBrake += (brakeInput - smoothedBrake) * min(1f, dt * 7.5f)
+        // Fuel rack response: smooth diesel injection build-up on press, immediate fuel cut on release
+        val throtRate = if (rawThrottle > smoothedThrottle) 2.1f else 13.5f
+        smoothedThrottle += (rawThrottle - smoothedThrottle) * min(1f, dt * throtRate)
+        smoothedBrake += (brakeInput - smoothedBrake) * min(1f, dt * 8.5f)
         val effThrottle = smoothedThrottle
         val effBrake = smoothedBrake
 
@@ -409,118 +423,253 @@ class PhysicsWorld(
         }
 
         val forwardSpeed = vx * cosA + vy * sinA
+        // Transmission gearbox with load hysteresis so heavy climbs/mud stay in high-torque low gears
+        val rearWx = x + rearAnchorLx * cosA
+        val rearMudTrap = terrain.isMudTrapAt(rearWx)
+        val rearMudDepth = terrain.mudDepthAt(rearWx)
+        val inMudZone = rearResult.grounded && rearResult.surface == SurfaceType.MUD
+        val inDeepBog = inMudZone && (rearMudTrap || rearMudDepth >= 0.42f)
+
         currentGear = when {
-            forwardSpeed < -0.35f -> 0
-            forwardSpeed < 2.8f -> 1
-            forwardSpeed < 5.6f -> 2
-            forwardSpeed < 8.4f -> 3
+            forwardSpeed < -0.30f || (effBrake > 0.25f && forwardSpeed < 0.22f) -> 0
+            inDeepBog || forwardSpeed < 2.9f -> 1
+            forwardSpeed < 5.7f -> 2
+            forwardSpeed < 8.5f -> 3
             else -> 4
         }
+
         val idleRpm = if (tractor == TractorModel.EICHER_241) 580f else 680f
-        val loadDragFactor = (activeCargoMassKg / 2400f).coerceIn(0f, 1f)
-        val targetRpm = if (fuel <= 0f) 0f else {
-            val gearRatio = when (currentGear) {
-                0 -> 240f
-                1 -> 440f
-                2 -> 285f
-                3 -> 205f
-                else -> 165f
-            }
-            val powerRpmBoost = if (powerModeInput) 150f * effThrottle else 0f
-            val speedRpm = abs(forwardSpeed) * gearRatio
-            (idleRpm + effThrottle * 540f + powerRpmBoost + speedRpm * 0.66f - loadDragFactor * 120f * effThrottle)
-                .coerceIn(idleRpm - 30f, 2350f)
+        val redlineRpm = 2380f
+        val mudLoadBonus = when {
+            inDeepBog -> 0.58f
+            currentSurface == SurfaceType.MUD -> 0.40f
+            currentSurface == SurfaceType.SAND -> 0.20f
+            currentSurface == SurfaceType.WET -> 0.14f
+            else -> 0f
         }
-        // Heavy diesel flywheel inertia prevents sudden rev spikes the moment throttle is tapped
-        val rpmRate = if (targetRpm > engineRpm) (2.6f - loadDragFactor * 0.7f) else 3.4f
+        val slopeLoad = (sinA * 0.48f).coerceIn(0f, 0.45f)
+        val loadDragFactor = ((activeCargoMassKg / 2400f) + mudLoadBonus + slopeLoad).coerceIn(0f, 1.25f)
+
+        // Real Diesel Torque Curve peaking at mid-band RPM (1350..1750 RPM)
+        val rpmNorm = ((engineRpm - idleRpm) / (redlineRpm - idleRpm)).coerceIn(0f, 1f)
+        val dieselTorqueCurve = (0.78f + 0.54f * sin(rpmNorm * PI.toFloat() * 0.85f) - 0.16f * rpmNorm * rpmNorm)
+            .coerceIn(0.42f, 1.32f)
+        val gearMechAdvantage = when (currentGear) {
+            0 -> 1.35f
+            1 -> 1.46f
+            2 -> 1.22f
+            3 -> 1.05f
+            else -> 0.94f
+        }
+
+        // Transmission-coupled wheel speed feeds back into engine RPM (including wheelspin in mud!)
+        val wheelSurfaceSpeed = abs(rearWheelOmega) * tractor.rearWheelRadius
+        val effectiveDrivetrainSpeed = max(abs(forwardSpeed), wheelSurfaceSpeed * 0.72f)
+        val gearRpmScale = when (currentGear) {
+            0 -> 240f
+            1 -> 420f
+            2 -> 280f
+            3 -> 200f
+            else -> 160f
+        }
+        val targetRpm = if (fuel <= 0f) 0f else {
+            val powerRpmBoost = if (powerModeInput) 190f * effThrottle else 0f
+            val slipRevExtra = (tyreSlipRatio * 340f * effThrottle).coerceAtMost(420f)
+            val governedBand = idleRpm + effThrottle * 580f + powerRpmBoost + slipRevExtra
+            val coupledClimb = effectiveDrivetrainSpeed * gearRpmScale * (if (rawThrottle > 0.05f) 0.65f else 0.22f)
+            (governedBand + coupledClimb - loadDragFactor * 95f * effThrottle)
+                .coerceIn(idleRpm - 30f, redlineRpm)
+        }
+        // Gradual flywheel pickup under diesel load when accelerating; immediate drop when pedal is released
+        val rpmRate = when {
+            rawThrottle < 0.05f && targetRpm <= engineRpm -> 9.4f
+            targetRpm > engineRpm -> (1.24f - loadDragFactor * 0.24f + if (powerModeInput) 0.22f else 0f).coerceAtLeast(0.68f)
+            else -> 7.6f
+        }
         engineRpm += (targetRpm - engineRpm) * min(1f, dt * rpmRate)
+
+        var stepBogLevel = 0f
+        var stepSlipRatio = 0f
 
         if (rearResult.grounded || frontResult.grounded) {
             val surf = if (rearResult.grounded) rearResult.surface else frontResult.surface
-            val powerGripBonus = if (powerModeInput) 1.24f else 1.0f
-            val surfaceGrip = (surf.baseGrip * gripMult * powerGripBonus).coerceIn(0.45f, 1.55f)
             val tx = if (rearResult.grounded) rearResult.tx else frontResult.tx
             val ty = if (rearResult.grounded) rearResult.ty else frontResult.ty
             val tangentSpeed = vx * tx + vy * ty
 
+            // True rear-axle normal load determines traction available on road/mud
+            val rearNormalForce = if (rearResult.grounded) {
+                sqrt(rearResult.fx * rearResult.fx + rearResult.fy * rearResult.fy)
+            } else massT * gravity * 0.35f
+            val frontNormalForce = if (frontResult.grounded) {
+                sqrt(frontResult.fx * frontResult.fx + frontResult.fy * frontResult.fy)
+            } else 0f
+
+            // Power Boost engages 4WD front axle + differential lock cleat bite in mud!
+            val effectiveNormalWeight = if (powerModeInput) {
+                (rearNormalForce + frontNormalForce * 0.85f).coerceAtLeast(massT * gravity * 1.02f)
+            } else {
+                (rearNormalForce + frontNormalForce * 0.42f).coerceAtLeast(massT * gravity * 0.88f)
+            }
+
+            // Deep random mud traps lose tyre bite unless upgraded Lug Tyres (>=1.38) or POWER mode is turned ON!
+            val mudTractionPenalty = when {
+                inDeepBog && powerModeInput -> 1.24f // Diff-lock + 4WD bites solidly into mud!
+                inDeepBog && gripMult < 1.38f -> (0.40f - 0.14f * rearMudDepth).coerceIn(0.24f, 0.36f)
+                inDeepBog -> 0.82f // Upgraded max Lug Tyres dig cleanly through mud pits
+                else -> 1.0f
+            }
+            val powerGripBonus = when {
+                powerModeInput && surf == SurfaceType.MUD -> 1.72f
+                powerModeInput -> 1.28f
+                else -> 1.0f
+            }
+            val surfaceGrip = (surf.baseGrip * gripMult * powerGripBonus * mudTractionPenalty).coerceIn(0.16f, 1.75f)
+            val maxTractionForce = effectiveNormalWeight * surfaceGrip * 1.22f
+
             var driveForce = 0f
+            var requestedAxleForce = 0f
             if (effThrottle > 0.01f && !handbrakeInput) {
-                val powerTorqueBonus = if (powerModeInput) 1.42f else 1.0f
+                val powerTorqueBonus = if (powerModeInput) 1.52f else 1.0f
                 val effectiveTopSpeed = maxSpeedMs * (if (powerModeInput) 1.18f else 1.0f)
                 val speedRatio = (tangentSpeed / effectiveTopSpeed).coerceIn(0f, 1.08f)
-                // Low-gear diesel crawler boost for climbing steep hills smoothly with heavy trailers
-                val lowGearMult = if (currentGear <= 1) 1.18f else 1.0f
-                val torqueCurve = (1.30f - 0.88f * speedRatio).coerceAtLeast(0.06f)
-                val rawDrive = massT * 8.6f * powerMult * torqueMult * powerTorqueBonus * lowGearMult * torqueCurve * effThrottle
-                val maxTraction = massT * gravity * surfaceGrip * 1.24f
-                driveForce += min(rawDrive, maxTraction)
+                val governorTaper = (1.20f - 0.86f * speedRatio * speedRatio).coerceAtLeast(0.08f)
 
-                // Subtle realistic torque squat only proportional to drive load
-                torque += driveForce * 0.045f
+                requestedAxleForce = massT * 8.6f * powerMult * torqueMult * powerTorqueBonus *
+                    gearMechAdvantage * dieselTorqueCurve * governorTaper * effThrottle
+
+                driveForce += min(requestedAxleForce, maxTractionForce)
+
+                // Realistic torque squat proportional to transmitted ground traction
+                torque += driveForce * 0.056f
             }
 
             if (effBrake > 0.01f) {
                 if (tangentSpeed > 0.45f) {
-                    val brakeForce = massT * 13.0f * brakeMult * effBrake * surfaceGrip
+                    val brakeForce = massT * 13.5f * brakeMult * effBrake * surfaceGrip.coerceAtLeast(0.55f)
                     driveForce -= brakeForce
-                    torque -= brakeForce * 0.065f
+                    torque -= brakeForce * 0.070f
                 } else {
-                    val revLimit = -4.2f
+                    val revLimit = -4.5f
                     if (tangentSpeed > revLimit) {
-                        val revForce = massT * 5.4f * torqueMult * effBrake * surfaceGrip
+                        val revForce = massT * 5.8f * torqueMult * effBrake * surfaceGrip.coerceAtLeast(0.60f)
                         driveForce -= revForce
                     }
                 }
             }
 
             if (handbrakeInput) {
-                val hbForce = (-tangentSpeed * massT * 12f).coerceIn(-massT * 15f, massT * 15f)
-                driveForce += hbForce * surfaceGrip
+                val hbForce = (-tangentSpeed * massT * 13f).coerceIn(-massT * 16f, massT * 16f)
+                driveForce += hbForce * surfaceGrip.coerceAtLeast(0.65f)
             }
 
-            // Natural diesel engine-braking + rolling resistance when coasting
-            val coastDrag = if (effThrottle < 0.05f && effBrake < 0.05f) 0.62f else 0.12f
-            val rollingResist = -tangentSpeed * massT * (surf.rollingDrag * 22f + coastDrag)
+            // Viscous mud trap bog suction holds tractor back unless POWER 4WD breaks suction!
+            val mudBogResist = if (inDeepBog && !powerModeInput && gripMult < 1.38f) {
+                val trapHold = massT * (2.6f + 2.4f * rearMudDepth)
+                if (abs(tangentSpeed) < 1.4f) -tangentSpeed * massT * 6.8f else -signum(tangentSpeed) * trapHold * 0.45f
+            } else 0f
+
+            // Real compression engine braking when accelerator is released + surface rolling drag
+            val engineBraking = if (rawThrottle < 0.05f && effBrake < 0.05f && abs(tangentSpeed) > 0.25f) {
+                0.75f + 0.55f * gearMechAdvantage
+            } else 0.10f
+            val mudViscousScale = when {
+                inDeepBog && (powerModeInput || gripMult >= 1.38f) -> 12f
+                inDeepBog -> 42f
+                surf == SurfaceType.MUD -> 26f
+                else -> 18f
+            }
+            val rollingResist = -tangentSpeed * massT * (surf.rollingDrag * mudViscousScale + engineBraking) + mudBogResist
             val totalTangential = driveForce + rollingResist
 
             forceX += tx * totalTangential
             forceY += ty * totalTangential
 
-            val wheelSpinSlip = if (effThrottle > 0.25f && surf.baseGrip < 0.72f) 1.45f else 1.0f
-            rearWheelRot += ((tangentSpeed * wheelSpinSlip) / tractor.rearWheelRadius) * dt
-            frontWheelRot += (tangentSpeed / tractor.frontWheelRadius) * dt
+            // Real rotational wheel physics: excess torque above road grip spins rear tyre independently!
+            val groundOmega = tangentSpeed / tractor.rearWheelRadius
+            val torqueExcess = (requestedAxleForce - maxTractionForce).coerceAtLeast(0f)
+            val tractionBreakSlip = if (requestedAxleForce > 1f) {
+                (torqueExcess / maxTractionForce.coerceAtLeast(100f)).coerceIn(0f, 2.2f)
+            } else 0f
 
-            if (abs(tangentSpeed) > 1.0f || (effThrottle > 0.3f && surf == SurfaceType.MUD)) {
-                dustAccum += dt * (3f + abs(tangentSpeed) * 1.1f)
-                if (dustAccum >= 1f) {
-                    dustAccum = 0f
+            val stuckSpinBoost = if (inDeepBog && !powerModeInput && effThrottle > 0.12f) {
+                // Tyre stalls in deep mud & spins furiously forward throwing kichad!
+                (6.5f + effThrottle * 11.5f) * (1f + 0.35f * rearMudDepth)
+            } else 0f
+
+            val targetRearOmega = when {
+                handbrakeInput -> 0f
+                effBrake > 0.2f && tangentSpeed > 0.5f -> groundOmega * 0.45f
+                else -> groundOmega + tractionBreakSlip * (5.5f + effThrottle * 8.0f) + stuckSpinBoost
+            }
+            rearWheelOmega += (targetRearOmega - rearWheelOmega) * min(1f, dt * 11f)
+            frontWheelOmega = tangentSpeed / tractor.frontWheelRadius
+
+            rearWheelRot += rearWheelOmega * dt
+            frontWheelRot += frontWheelOmega * dt
+
+            // Compute wheel slip velocity & mud bog severity for UI warnings and kichad spray
+            val wheelRimSpeed = rearWheelOmega * tractor.rearWheelRadius
+            val slipSpeed = abs(wheelRimSpeed - tangentSpeed)
+            stepSlipRatio = (slipSpeed / max(2.2f, abs(tangentSpeed) + 1.8f)).coerceIn(0f, 2.0f)
+            stepBogLevel = if (inDeepBog) {
+                if (!powerModeInput && gripMult < 1.38f) (0.72f + 0.28f * rearMudDepth).coerceIn(0f, 1f)
+                else 0.30f
+            } else 0f
+
+            // Dynamic Kichad / Water / Dust emission driven by actual tyre rim slip & speed!
+            val shouldEmit = abs(tangentSpeed) > 1.0f || (slipSpeed > 1.0f && (surf == SurfaceType.MUD || surf == SurfaceType.WET || surf == SurfaceType.SAND))
+            if (shouldEmit) {
+                val slipIntensity = if (surf == SurfaceType.MUD || surf == SurfaceType.WET) {
+                    slipSpeed * 5.2f + if (inDeepBog && effThrottle > 0.15f) 18f else 0f
+                } else {
+                    slipSpeed * 2.4f
+                }
+                dustAccum += dt * (2.8f + abs(tangentSpeed) * 1.05f + slipIntensity)
+                val spawnCount = dustAccum.toInt().coerceIn(0, 3)
+                if (spawnCount > 0) {
+                    dustAccum -= spawnCount
                     val pKind = when (surf) {
                         SurfaceType.MUD -> 2
                         SurfaceType.WET -> 3
                         else -> 1
                     }
                     val wx = x + rearAnchorLx * cosA
-                    val wy = terrain.heightAt(wx) + 0.06f
-                    spawnParticle(
-                        px = wx,
-                        py = wy,
-                        pvx = -vx * 0.35f - (0.6f + rng.nextFloat() * 1.2f),
-                        pvy = 0.5f + rng.nextFloat() * 1.2f,
-                        size = 0.14f + rng.nextFloat() * 0.14f,
-                        life = 0.45f + rng.nextFloat() * 0.25f,
-                        kind = pKind
-                    )
+                    val wy = terrain.heightAt(wx) + 0.04f
+                    repeat(spawnCount) {
+                        val flingBack = (if (surf == SurfaceType.MUD) 2.8f else 0.9f) + slipSpeed * 0.55f + rng.nextFloat() * 2.4f
+                        val flingUp = (if (surf == SurfaceType.MUD) 1.3f else 0.6f) + slipSpeed * 0.26f + rng.nextFloat() * 1.9f
+                        spawnParticle(
+                            px = wx - 0.15f + (rng.nextFloat() - 0.5f) * 0.35f,
+                            py = wy + rng.nextFloat() * 0.12f,
+                            pvx = -vx * 0.30f - flingBack,
+                            pvy = flingUp,
+                            size = (if (surf == SurfaceType.MUD) 0.16f else 0.13f) + rng.nextFloat() * 0.15f,
+                            life = 0.44f + rng.nextFloat() * 0.32f,
+                            kind = pKind
+                        )
+                    }
                 }
             }
         } else {
-            // Subtle airborne pitch control
-            torque += (effThrottle * 0.35f - effBrake * 0.35f) * massT * 1.6f
-            rearWheelRot += (effThrottle * 6f) * dt
+            // Airborne pitch control & wheel spin
+            torque += (effThrottle * 0.45f - effBrake * 0.42f) * massT * 1.7f
+            rearWheelOmega += ((effThrottle * 11f) - rearWheelOmega) * min(1f, dt * 6f)
+            rearWheelRot += rearWheelOmega * dt
             frontWheelRot += (vx / tractor.frontWheelRadius) * dt * 0.5f
         }
 
-        // Front axle ballast stability & angular damping keeps tractor planted realistically
-        angularVel *= (1f - dt * 3.8f)
+        isStuckInMud = inDeepBog && !powerModeInput && gripMult < 1.38f && abs(vx) < 1.55f
+        mudBogLevel += (stepBogLevel - mudBogLevel) * min(1f, dt * 8f)
+        tyreSlipRatio += (stepSlipRatio - tyreSlipRatio) * min(1f, dt * 10f)
+        chassisMudCoat = if (inMudZone) {
+            min(1f, chassisMudCoat + dt * (0.28f + tyreSlipRatio * 0.45f))
+        } else {
+            max(0f, chassisMudCoat - dt * 0.035f)
+        }
+
+        // Realistic chassis angular damping (allows genuine tipping on extreme slopes/crests while stable normally)
+        angularVel *= (1f - dt * 2.85f)
 
         vx += (forceX * invMassT) * dt
         vy += (forceY * invMassT) * dt
@@ -541,6 +690,29 @@ class PhysicsWorld(
             vx *= 0.985f
         }
 
+        // Tractor hood & driver/ROPS roof impact collision when tipping/overturning onto side or upside down!
+        if (abs(angle) > 1.12f) {
+            val hoodTopWx = x + 0.75f * cosA - 1.05f * sinA
+            val hoodTopWy = y + 0.75f * sinA + 1.05f * cosA
+            val hoodGround = terrain.heightAt(hoodTopWx)
+            val cabTopWx = x - 0.30f * cosA - 1.45f * sinA
+            val cabTopWy = y - 0.30f * sinA + 1.45f * cosA
+            val cabGround = terrain.heightAt(cabTopWx)
+            val maxPen = max(hoodGround - hoodTopWy, cabGround - cabTopWy)
+            if (maxPen > 0f) {
+                y += maxPen * 0.85f
+                if (vy < -1.8f && bumpCooldown <= 0f) {
+                    soundEngine?.playSfx(SfxType.BUMP)
+                    camShake = 0.28f
+                    bumpCooldown = 0.32f
+                    spawnParticle(cabTopWx, cabGround + 0.1f, (rng.nextFloat() - 0.5f) * 2.4f, 1.8f, 0.22f, 0.55f, 1)
+                }
+                if (vy < 0f) vy = -vy * 0.08f
+                vx *= 0.90f
+                angularVel *= 0.84f
+            }
+        }
+
         if (x < -14f && vx < 0f) {
             x = -14f
             vx = 0f
@@ -558,23 +730,23 @@ class PhysicsWorld(
         rearWheelCompression = clampWheelCompression(x, y, angle, rearAnchorLx, rearAnchorLy, tractor.rearWheelRadius, minLen, maxLen)
         frontWheelCompression = clampWheelCompression(x, y, angle, frontAnchorLx, frontAnchorLy, tractor.frontWheelRadius, minLen, maxLen)
 
-        val targetLean = (-effThrottle * 0.16f + effBrake * 0.18f - sinA * 0.22f).coerceIn(-0.32f, 0.32f)
+        val targetLean = (-effThrottle * 0.16f + effBrake * 0.18f - sinA * 0.24f).coerceIn(-0.34f, 0.34f)
         driverLean += (targetLean - driverLean) * (dt * 6f)
 
-        // Realistic Diesel Exhaust Plumes straight from the exact Silencer Tip!
-        val exhaustRate = 7.5f + effThrottle * 22f + (activeCargoMassKg / 2400f) * effThrottle * 8f
+        // Realistic Diesel Exhaust Plumes straight from the exact Silencer Tip (heavier black soot in kichad/load!)
+        val exhaustRate = 7.5f + effThrottle * 22f + loadDragFactor * effThrottle * 11f
         exhaustAccum += dt * exhaustRate
         if (exhaustAccum >= 1f && fuel > 0f) {
             exhaustAccum = 0f
             val exWorldX = x + exhaustLocalX * cosA - exhaustLocalY * sinA
             val exWorldY = y + exhaustLocalX * sinA + exhaustLocalY * cosA
-            val loadSoot = (0.28f + effThrottle * 0.52f + (activeCargoMassKg / 2500f) * 0.20f).coerceIn(0.2f, 0.95f)
+            val loadSoot = (0.28f + effThrottle * 0.48f + loadDragFactor * 0.24f).coerceIn(0.2f, 0.98f)
             spawnParticle(
                 px = exWorldX,
                 py = exWorldY,
                 pvx = vx * 0.25f - 0.55f + (rng.nextFloat() - 0.5f) * 0.45f,
                 pvy = 1.9f + effThrottle * 2.1f + rng.nextFloat() * 0.5f,
-                size = 0.08f + effThrottle * 0.09f,
+                size = 0.08f + effThrottle * 0.09f + (if (currentSurface == SurfaceType.MUD) 0.03f else 0f),
                 life = 0.72f + rng.nextFloat() * 0.42f,
                 kind = 0,
                 darkSoot = loadSoot
@@ -628,7 +800,8 @@ class PhysicsWorld(
             trTorque += (trWheelRes.rx * trWheelRes.fy - trWheelRes.ry * trWheelRes.fx)
             val tSpeed = trVx * trWheelRes.tx + trVy * trWheelRes.ty
             val trailerBrake = if (handbrakeInput) 10.5f else if (brakeInput > 0.05f && tSpeed > 0.4f) 3.2f * brakeInput else 0f
-            val drag = -tSpeed * totalMassTr * (trWheelRes.surface.rollingDrag * 16f + 0.16f + trailerBrake)
+            val mudTrailerMult = if (trWheelRes.surface == SurfaceType.MUD) 24f else 16f
+            val drag = -tSpeed * totalMassTr * (trWheelRes.surface.rollingDrag * mudTrailerMult + 0.16f + trailerBrake)
             trFx += trWheelRes.tx * drag
             trFy += trWheelRes.ty * drag
             trWheelRot += (tSpeed / trailer.wheelRadius) * dt
@@ -802,8 +975,8 @@ class PhysicsWorld(
         val tx = ny
         val ty = -nx
 
-        // Curved circular tyre footprint keeps tyre circumference smoothly rolling over bumps & slopes
-        val requiredCenterY = sampleRequiredWheelCenterY(maxWheelX, wheelRadius, nx)
+        // Curved circular tyre footprint with realistic tyre sinkage into soft kichad mud & river sand
+        val requiredCenterY = sampleRequiredWheelCenterY(maxWheelX, wheelRadius, nx, surf)
         val penetration = requiredCenterY - maxWheelY
 
         if (penetration <= 0f) {
@@ -837,14 +1010,21 @@ class PhysicsWorld(
         )
     }
 
-    private fun sampleRequiredWheelCenterY(wx: Float, r: Float, nx: Float): Float {
+    private fun sampleRequiredWheelCenterY(wx: Float, r: Float, nx: Float, surf: SurfaceType): Float {
         val slopeDx = (-nx * r).coerceIn(-r * 0.62f, r * 0.62f)
         val halfSpan = r * 0.42f
         val d0 = terrain.heightAt(wx) + r
         val dL = terrain.heightAt(wx - halfSpan) + sqrt(max(0f, r * r - halfSpan * halfSpan))
         val dR = terrain.heightAt(wx + halfSpan) + sqrt(max(0f, r * r - halfSpan * halfSpan))
         val dS = terrain.heightAt(wx + slopeDx) + sqrt(max(0f, r * r - slopeDx * slopeDx))
-        return max(max(d0, dL), max(dR, dS))
+        val mudDepth = terrain.mudDepthAt(wx)
+        val mudSink = when (surf) {
+            SurfaceType.MUD -> 0.085f + mudDepth * 0.085f
+            SurfaceType.SAND -> 0.038f
+            SurfaceType.WET -> 0.024f
+            else -> 0f
+        }
+        return max(max(d0, dL), max(dR, dS)) - mudSink
     }
 
     private fun checkCollectiblesAndCheckpoints() {
@@ -928,14 +1108,21 @@ class PhysicsWorld(
             }
         }
 
-        if (abs(angle) > 1.95f) {
+        tiltDanger = ((abs(angle) - 0.62f) / 0.68f).coerceIn(0f, 1f)
+        if (abs(angle) > 2.15f) {
+            overturnTimer += dt * 3.5f
+            if (overturnTimer >= 0.40f) {
+                triggerGameOver(GameOverReason.OVERTURNED)
+                return
+            }
+        } else if (abs(angle) > 1.32f) {
             overturnTimer += dt
-            if (overturnTimer >= 0.75f) {
+            if (overturnTimer >= 0.45f) {
                 triggerGameOver(GameOverReason.OVERTURNED)
                 return
             }
         } else {
-            overturnTimer = max(0f, overturnTimer - dt * 2f)
+            overturnTimer = max(0f, overturnTimer - dt * 2.2f)
         }
     }
 
@@ -1000,11 +1187,11 @@ class PhysicsWorld(
     }
 
     private fun updateCamera(dt: Float) {
-        val leadOffset = (if (hasTrailer) 1.25f else 2.5f) + (vx * 0.22f).coerceIn(-1.2f, 3.2f)
+        val leadOffset = (if (hasTrailer) 0.55f else 1.80f) + (vx * 0.18f).coerceIn(-1.0f, 2.5f)
         val targetCamX = x + leadOffset
-        val targetCamY = y + 1.00f
-        camX += (targetCamX - camX) * (dt * 6.5f)
-        camY += (targetCamY - camY) * (dt * 4.5f)
+        val targetCamY = y + 0.62f
+        camX += (targetCamX - camX) * (dt * 6.8f)
+        camY += (targetCamY - camY) * (dt * 4.8f)
         camShake = max(0f, camShake - dt * 1.4f)
     }
 
@@ -1026,8 +1213,9 @@ class PhysicsWorld(
         val anchorWy = bodyY + ry
         val maxWheelX = anchorWx + sinA * maxLen
         val maxWheelY = anchorWy - cosA * maxLen
+        val surf = terrain.surfaceAt(maxWheelX)
         val (nx, _) = terrain.normalAt(maxWheelX)
-        val requiredCenterY = sampleRequiredWheelCenterY(maxWheelX, wheelRadius, nx)
+        val requiredCenterY = sampleRequiredWheelCenterY(maxWheelX, wheelRadius, nx, surf)
         val pen = requiredCenterY - maxWheelY
         return if (pen <= 0f) maxLen else (maxLen - pen).coerceIn(minLen, maxLen)
     }
@@ -1041,8 +1229,9 @@ class PhysicsWorld(
             audio.hornActive = false
             val slopeStrain = (sin(angle) * 1.4f).coerceIn(0f, 0.7f)
             val cargoStrain = (activeCargoMassKg / 2400f) * 0.35f
+            val mudStrain = if (currentSurface == SurfaceType.MUD) 0.28f + mudBogLevel * 0.25f else 0f
             val powerStrain = if (powerModeInput && smoothedThrottle > 0.1f) 0.18f else 0f
-            audio.loadStrain = (slopeStrain + cargoStrain + powerStrain).coerceIn(0f, 1f)
+            audio.loadStrain = (slopeStrain + cargoStrain + mudStrain + powerStrain).coerceIn(0f, 1f)
         }
     }
 
@@ -1074,8 +1263,18 @@ class PhysicsWorld(
             checkpointBannerTimer = checkpointBannerTimer,
             lastCheckpointMeters = lastCheckpointMeters,
             driverLean = driverLean,
-            currentSurface = currentSurface
+            currentSurface = currentSurface,
+            isStuckInMud = isStuckInMud,
+            mudBogLevel = mudBogLevel,
+            tyreSlipRatio = tyreSlipRatio,
+            tiltDanger = tiltDanger
         )
+    }
+
+    private fun signum(v: Float): Float = when {
+        v > 0f -> 1f
+        v < 0f -> -1f
+        else -> 0f
     }
 
     private fun normalizeAngle(a: Float): Float {

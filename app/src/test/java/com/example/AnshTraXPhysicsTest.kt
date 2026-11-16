@@ -235,7 +235,7 @@ class AnshTraXPhysicsTest {
     }
 
     @Test
-    fun hitchAtRearTyreCenterAndPowerBoostAndSmoothRpmWork() {
+    fun hitchRaisedStraightAndPowerBoostAndAsymmetricRpmWork() {
         val normalWorld = PhysicsWorld(
             tractor = TractorModel.EICHER_241,
             driver = DriverCharacter.ANSH,
@@ -246,20 +246,44 @@ class AnshTraXPhysicsTest {
             mission = null,
             soundEngine = null
         )
-        // Hitch vertical offset must sit right at rear tyre center height (-0.31m relative to body)
+        // Raised hitch vertical offset sits cleanly above rear axle (-0.31m) around -0.21m for a straight horizontal drawbar
         assertTrue(
-            "Hitch Y (${normalWorld.hitchLocalY}) should match rear axle height (-0.31m)",
-            abs(normalWorld.hitchLocalY - (-0.31f)) < 0.02f
+            "Raised Hitch Y (${normalWorld.hitchLocalY}) should sit cleanly above rear axle (-0.214m ± 0.04m)",
+            abs(normalWorld.hitchLocalY - (-0.214f)) < 0.04f
+        )
+        assertTrue(
+            "Trailer tongue Y (${normalWorld.tongueLocalY}) should sit nearly level",
+            abs(normalWorld.tongueLocalY) <= 0.25f
         )
 
-        // Verify smooth RPM ramp (no sudden >350 RPM jump in first 0.1s of pressing gas)
+        // Verify slow gradual pickup build-up vs swift RPM drop when releasing accelerator
         val initialRpm = normalWorld.engineRpm
         normalWorld.throttleInput = 1f
         repeat(6) { normalWorld.step(1f / 60f) }
-        val delta100ms = normalWorld.engineRpm - initialRpm
-        assertTrue("RPM jumped too abruptly in 100ms: +$delta100ms", delta100ms < 350f)
+        val delta100msClimb = normalWorld.engineRpm - initialRpm
+        assertTrue("RPM climbed too abruptly in 100ms: +$delta100msClimb", delta100msClimb < 260f)
+
+        // Rev up for 1.5s then release gas and check quick drop over 0.3s
+        repeat(84) { normalWorld.step(1f / 60f) }
+        val peakRpm = normalWorld.engineRpm
+        normalWorld.throttleInput = 0f
+        repeat(18) { normalWorld.step(1f / 60f) }
+        val drop300ms = peakRpm - normalWorld.engineRpm
+        assertTrue("RPM did not drop briskly on accelerator release: -$drop300ms", drop300ms > 120f)
 
         // Compare distance with Power Boost OFF vs ON over 3 seconds
+        val freshNormal = PhysicsWorld(
+            tractor = TractorModel.EICHER_241,
+            driver = DriverCharacter.ANSH,
+            trailer = TrailerType.HEAVY_TIPPER,
+            cargo = CargoType.STONES,
+            map = MapEnvironment.MOUNTAIN_ROADS,
+            upgrades = TractorUpgrades(),
+            mission = null,
+            soundEngine = null
+        )
+        freshNormal.throttleInput = 1f
+
         val powerWorld = PhysicsWorld(
             tractor = TractorModel.EICHER_241,
             driver = DriverCharacter.ANSH,
@@ -274,12 +298,93 @@ class AnshTraXPhysicsTest {
         powerWorld.throttleInput = 1f
 
         repeat(180) {
-            normalWorld.step(1f / 60f)
+            freshNormal.step(1f / 60f)
             powerWorld.step(1f / 60f)
         }
         assertTrue(
-            "Power Boost (${powerWorld.x}m) should pull heavier/faster than Normal (${normalWorld.x}m)",
-            powerWorld.x > normalWorld.x
+            "Power Boost (${powerWorld.x}m) should pull heavier/faster than Normal (${freshNormal.x}m)",
+            powerWorld.x > freshNormal.x
+        )
+
+        // Verify Kichad (MUD) imposes significantly heavier rolling drag & lower grip than DIRT
+        assertTrue(
+            "MUD rollingDrag (${com.example.model.SurfaceType.MUD.rollingDrag}) must be > 3x DIRT (${com.example.model.SurfaceType.DIRT.rollingDrag})",
+            com.example.model.SurfaceType.MUD.rollingDrag > com.example.model.SurfaceType.DIRT.rollingDrag * 3f
+        )
+    }
+
+    @Test
+    fun randomMudBogTrapsSpinningTyresAndPowerModePullsOut() {
+        val world = PhysicsWorld(
+            tractor = TractorModel.EICHER_241,
+            driver = DriverCharacter.VANSH,
+            trailer = TrailerType.SMALL_TROLLEY,
+            cargo = CargoType.SOIL,
+            map = MapEnvironment.FARMING_FIELDS,
+            upgrades = TractorUpgrades(),
+            mission = null,
+            soundEngine = null,
+            terrainSeed = 424242L
+        )
+        world.terrain.ensureGeneratedUpTo(260f)
+        assertTrue("Background landmarks should be populated", world.terrain.landmarks.isNotEmpty())
+
+        // Find the first generated random mud trap past launchpad and position tractor into it
+        val pts = world.terrain.getVisiblePoints(30f, 220f)
+        val trapPt = pts.firstOrNull { it.isMudTrap }
+        assertTrue("Random mud trap should spawn on Farming Fields", trapPt != null)
+
+        val trapCenterX = trapPt!!.x + 2.4f
+        world.x = trapCenterX
+        world.y = world.terrain.heightAt(trapCenterX) + world.tractor.rearWheelRadius + 0.25f
+        world.vx = 0.6f
+        world.vy = 0f
+        world.trX = world.x + world.hitchLocalX - world.tongueLocalX
+        world.trY = world.terrain.heightAt(world.trX) + world.trailer.wheelRadius + 0.25f
+        world.trVx = 0.6f
+        world.throttleInput = 1f
+
+        // Without POWER mode, tractor bogs down, rear tyre slips fast, and throws mud particles
+        repeat(90) { world.step(1f / 60f) }
+        val bogSpeed = world.vx
+        val mudParticles = world.particles.count { it.kind == 2 }
+        assertTrue("Tractor tyre should spin fast when bogged in mud: omega=${world.rearWheelOmega}", world.rearWheelOmega > 4.5f)
+        assertTrue("Mud splash particles should fling out behind spinning tyre ($mudParticles)", mudParticles > 0)
+        assertTrue("Tractor without POWER should crawl/stick slowly in mud trap: vx=$bogSpeed", bogSpeed < 2.2f)
+
+        // Turning ON POWER mode engages diff-lock / 4WD traction and pulls cleanly forward
+        world.setPowerMode(true)
+        val xBeforePower = world.x
+        repeat(150) { world.step(1f / 60f) }
+        assertTrue(
+            "POWER mode should pull tractor out of mud trap (moved from $xBeforePower to ${world.x})",
+            world.x - xBeforePower > 4.5f
+        )
+    }
+
+    @Test
+    fun tractorOverturnTriggersGameOverDefeat() {
+        val world = PhysicsWorld(
+            tractor = TractorModel.EICHER_241,
+            driver = DriverCharacter.ANSH,
+            trailer = TrailerType.NONE,
+            cargo = CargoType.NONE,
+            map = MapEnvironment.MOUNTAIN_ROADS,
+            upgrades = TractorUpgrades(),
+            mission = null,
+            soundEngine = null,
+            terrainSeed = 108241L
+        )
+        // Simulate tractor flipped onto its roof/side past overturn threshold
+        world.angle = 2.45f
+        world.angularVel = 0f
+        repeat(45) { world.step(1f / 60f) }
+
+        assertEquals("Overturned tractor must trigger GAME_OVER", RunPhase.GAME_OVER, world.phase)
+        assertEquals(
+            "Overturned tractor must set OVERTURNED reason",
+            com.example.engine.GameOverReason.OVERTURNED,
+            world.gameOverReason
         )
     }
 }

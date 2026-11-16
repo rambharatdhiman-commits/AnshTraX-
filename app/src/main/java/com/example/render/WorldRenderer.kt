@@ -69,40 +69,60 @@ private data class TractorSpriteMetrics(
     val frontAxleNy: Float,
     val seatNx: Float,
     val seatNy: Float,
+    val footNx: Float,
+    val footNy: Float,
     val gripNx: Float,
     val gripNy: Float,
     val headlightNx: Float,
     val headlightNy: Float,
+    val rearLampNx: Float,
+    val rearLampNy: Float,
     val hitchNx: Float,
     val hitchNy: Float
 )
 
 object WorldRenderer {
 
+    private val conePath = Path()
+    private val gussetPath = Path()
+    private val heapPath = Path()
+    private val torsoPath = Path()
+    private val collarPath = Path()
+    private val faceOvalPath = Path()
+    private val rockPath = Path()
+    private val flagPath = Path()
+    private val backHairPath = Path()
+
     private fun metricsFor(tractor: TractorModel): TractorSpriteMetrics = when (tractor) {
         TractorModel.EICHER_241 -> TractorSpriteMetrics(
             rearAxleNx = 0.315f, rearAxleNy = 0.677f,
             frontAxleNx = 0.774f, frontAxleNy = 0.808f,
-            seatNx = 0.280f, seatNy = 0.365f,
+            seatNx = 0.292f, seatNy = 0.338f,
+            footNx = 0.482f, footNy = 0.505f,
             gripNx = 0.470f, gripNy = 0.258f,
             headlightNx = 0.841f, headlightNy = 0.383f,
-            hitchNx = 0.105f, hitchNy = 0.677f
+            rearLampNx = 0.145f, rearLampNy = 0.318f,
+            hitchNx = 0.095f, hitchNy = 0.641f
         )
         TractorModel.MAHINDRA_575 -> TractorSpriteMetrics(
             rearAxleNx = 0.243f, rearAxleNy = 0.701f,
             frontAxleNx = 0.753f, frontAxleNy = 0.822f,
-            seatNx = 0.305f, seatNy = 0.340f,
+            seatNx = 0.308f, seatNy = 0.326f,
+            footNx = 0.436f, footNy = 0.535f,
             gripNx = 0.455f, gripNy = 0.292f,
             headlightNx = 0.875f, headlightNy = 0.425f,
-            hitchNx = 0.018f, hitchNy = 0.701f
+            rearLampNx = 0.118f, rearLampNy = 0.375f,
+            hitchNx = 0.015f, hitchNy = 0.665f
         )
         TractorModel.SONALIKA_750 -> TractorSpriteMetrics(
             rearAxleNx = 0.242f, rearAxleNy = 0.690f,
             frontAxleNx = 0.757f, frontAxleNy = 0.788f,
-            seatNx = 0.270f, seatNy = 0.305f,
+            seatNx = 0.275f, seatNy = 0.294f,
+            footNx = 0.428f, footNy = 0.515f,
             gripNx = 0.422f, gripNy = 0.270f,
             headlightNx = 0.870f, headlightNy = 0.370f,
-            hitchNx = 0.022f, hitchNy = 0.690f
+            rearLampNx = 0.112f, rearLampNy = 0.368f,
+            hitchNx = 0.018f, hitchNy = 0.654f
         )
     }
 
@@ -113,23 +133,25 @@ object WorldRenderer {
     ) {
         val w = size.width
         val h = size.height
-        val ppm = (h / 9.0f).coerceIn(48f, 118f)
+        // Larger heroic camera zoom so both tractor and trolley fill the screen richly with sharp detail
+        val ppm = (h / 6.7f).coerceIn(66f, 152f)
 
         val shakeX = if (world.camShake > 0.001f) sin(timeSec * 55f) * world.camShake * ppm else 0f
         val shakeY = if (world.camShake > 0.001f) cos(timeSec * 48f) * world.camShake * ppm else 0f
 
         val camX = world.camX
         val camY = world.camY
+        val anchorScreenFrac = if (world.hasTrailer) 0.51f else 0.42f
 
-        fun worldToScreenX(wx: Float): Float = w * 0.44f + (wx - camX) * ppm + shakeX
-        fun worldToScreenY(wy: Float): Float = h * 0.65f - (wy - camY) * ppm + shakeY
+        fun worldToScreenX(wx: Float): Float = w * anchorScreenFrac + (wx - camX) * ppm + shakeX
+        fun worldToScreenY(wy: Float): Float = h * 0.68f - (wy - camY) * ppm + shakeY
 
-        // 1. Atmospheric Sky, Clouds, Parallax Hills & Horizon Mist
-        drawRealisticAtmosphere(world.map, camX, w, h, timeSec)
+        // 1. Atmospheric Sky, Sunbeams, Clouds, Flying Birds, Parallax Hills & Landmarks
+        drawRealisticAtmosphere(world.map, world.terrain.landmarks, camX, w, h, timeSec)
 
         // 2. Roadside Props
-        val minVisX = camX - (w * 0.55f) / ppm - 10f
-        val maxVisX = camX + (w * 0.75f) / ppm + 12f
+        val minVisX = camX - (w * 0.62f) / ppm - 10f
+        val maxVisX = camX + (w * 0.72f) / ppm + 12f
         for (prop in world.terrain.props) {
             if (prop.x < minVisX || prop.x > maxVisX) continue
             val sx = worldToScreenX(prop.x)
@@ -137,7 +159,7 @@ object WorldRenderer {
             drawRealisticProp(world.map, prop, sx, sy, ppm, timeSec)
         }
 
-        // 3. Textured Ground & Road Surface
+        // 3. Textured Ground, Strata & Shimmering Kichad Road Surface
         val visiblePts = world.terrain.getVisiblePoints(minVisX, maxVisX)
         drawRealisticTerrain(
             map = world.map,
@@ -146,7 +168,8 @@ object WorldRenderer {
             worldToScreenX = ::worldToScreenX,
             worldToScreenY = ::worldToScreenY,
             h = h,
-            ppm = ppm
+            ppm = ppm,
+            timeSec = timeSec
         )
 
         // 4. Checkpoints & Finish Arch
@@ -171,31 +194,20 @@ object WorldRenderer {
             if (item.isFuel) drawFuelCan(sx, sy, ppm) else drawCoin(sx, sy, ppm, timeSec + item.x * 0.2f)
         }
 
-        // 6. Ground Contact Shadows
+        // 6. Crisp Zero-Allocation Dual-Feather Ground Contact Shadows
         val tractorGroundY = worldToScreenY(world.terrain.heightAt(world.x))
-        drawOval(
-            brush = Brush.radialGradient(
-                colors = listOf(Color.Black.copy(alpha = 0.56f), Color.Transparent),
-                center = Offset(worldToScreenX(world.x), tractorGroundY),
-                radius = 2.0f * ppm
-            ),
-            topLeft = Offset(worldToScreenX(world.x) - 2.0f * ppm, tractorGroundY - 0.26f * ppm),
-            size = Size(4.0f * ppm, 0.52f * ppm)
-        )
+        val txScreen = worldToScreenX(world.x)
+        drawOval(Color.Black.copy(alpha = 0.22f), Offset(txScreen - 2.1f * ppm, tractorGroundY - 0.24f * ppm), Size(4.2f * ppm, 0.48f * ppm))
+        drawOval(Color.Black.copy(alpha = 0.38f), Offset(txScreen - 1.55f * ppm, tractorGroundY - 0.14f * ppm), Size(3.1f * ppm, 0.28f * ppm))
         if (world.hasTrailer) {
             val trGroundY = worldToScreenY(world.terrain.heightAt(world.trX))
-            drawOval(
-                brush = Brush.radialGradient(
-                    colors = listOf(Color.Black.copy(alpha = 0.48f), Color.Transparent),
-                    center = Offset(worldToScreenX(world.trX), trGroundY),
-                    radius = (world.trailer.bedLength * 0.62f) * ppm
-                ),
-                topLeft = Offset(worldToScreenX(world.trX) - world.trailer.bedLength * 0.62f * ppm, trGroundY - 0.22f * ppm),
-                size = Size(world.trailer.bedLength * 1.24f * ppm, 0.44f * ppm)
-            )
+            val trScreenX = worldToScreenX(world.trX)
+            val halfSh = world.trailer.bedLength * 0.58f * ppm
+            drawOval(Color.Black.copy(alpha = 0.20f), Offset(trScreenX - halfSh, trGroundY - 0.20f * ppm), Size(halfSh * 2f, 0.40f * ppm))
+            drawOval(Color.Black.copy(alpha = 0.34f), Offset(trScreenX - halfSh * 0.72f, trGroundY - 0.12f * ppm), Size(halfSh * 1.44f, 0.24f * ppm))
         }
 
-        // 7. Billowing Soft Radial Diesel Exhaust Plumes & Road Dust/Mud/Splash
+        // 7. Zero-Allocation Soft Diesel Exhaust Plumes, Dust & Kichad Mud Splash
         for (p in world.particles) {
             val sx = worldToScreenX(p.x)
             val sy = worldToScreenY(p.y)
@@ -203,41 +215,26 @@ object WorldRenderer {
             val rad = p.size * ppm
             when (p.kind) {
                 0 -> {
-                    // Realistic radial-gradient diesel smoke puff fading softly outward
-                    val sootShade = (0.30f - p.darkSoot * 0.20f).coerceIn(0.08f, 0.35f)
+                    val sootShade = (0.30f - p.darkSoot * 0.22f).coerceIn(0.06f, 0.35f)
                     val smokeCol = Color(sootShade, sootShade, sootShade + 0.02f)
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                smokeCol.copy(alpha = lifeFrac * 0.62f),
-                                smokeCol.copy(alpha = lifeFrac * 0.25f),
-                                Color.Transparent
-                            ),
-                            center = Offset(sx, sy),
-                            radius = rad * 1.8f
-                        ),
-                        radius = rad * 1.8f,
-                        center = Offset(sx, sy)
-                    )
+                    drawCircle(smokeCol.copy(alpha = lifeFrac * 0.18f), rad * 1.75f, Offset(sx, sy))
+                    drawCircle(smokeCol.copy(alpha = lifeFrac * 0.40f), rad * 1.15f, Offset(sx, sy))
+                    drawCircle(smokeCol.copy(alpha = lifeFrac * 0.58f), rad * 0.65f, Offset(sx, sy))
                 }
                 1 -> {
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(Color(0xFF9C7A52).copy(alpha = lifeFrac * 0.42f), Color.Transparent),
-                            center = Offset(sx, sy),
-                            radius = rad * 1.4f
-                        ),
-                        radius = rad * 1.4f,
-                        center = Offset(sx, sy)
-                    )
+                    drawCircle(Color(0xFF9C7A52).copy(alpha = lifeFrac * 0.20f), rad * 1.40f, Offset(sx, sy))
+                    drawCircle(Color(0xFF9C7A52).copy(alpha = lifeFrac * 0.38f), rad * 0.85f, Offset(sx, sy))
                 }
-                2 -> drawCircle(Color(0xFF3A2210).copy(alpha = lifeFrac * 0.85f), rad, Offset(sx, sy))
-                3 -> drawCircle(Color(0xFFA9D6EA).copy(alpha = lifeFrac * 0.72f), rad, Offset(sx, sy))
+                2 -> {
+                    drawCircle(Color(0xFF2D190A).copy(alpha = lifeFrac * 0.88f), rad, Offset(sx, sy))
+                    drawCircle(Color(0xFF4B2D15).copy(alpha = lifeFrac * 0.62f), rad * 0.55f, Offset(sx - rad * 0.18f, sy - rad * 0.18f))
+                }
+                3 -> drawCircle(Color(0xFFA9D6EA).copy(alpha = lifeFrac * 0.74f), rad, Offset(sx, sy))
                 else -> drawCircle(Color(0xFFFFD54F).copy(alpha = lifeFrac * 0.88f), rad, Offset(sx, sy))
             }
         }
 
-        // 8. Detailed Trailer + A-Frame Drawbar + Physical Cargo
+        // 8. Detailed Trailer + Hydraulic Cylinder + Straight Drawbar + Physical Cargo
         if (world.hasTrailer) {
             drawTrailerWithCargo(
                 trailer = world.trailer,
@@ -255,7 +252,7 @@ object WorldRenderer {
             )
         }
 
-        // 9. Realistic Tractor Sprite + Rotating Tyre Sprites + Seated Real-Face Driver
+        // 9. Realistic Tractor Sprite + Rotating Tyre Sprites + Side-View Real-Face Driver + Mud Splatter
         drawRealisticTractorWithDriver(
             tractor = world.tractor,
             driver = world.driver,
@@ -268,7 +265,10 @@ object WorldRenderer {
             frontWheelRot = world.frontWheelRot,
             driverLean = world.driverLean,
             headlightsOn = world.map.isNightOrDusk,
-            ppm = ppm
+            ppm = ppm,
+            mudCoat = world.chassisMudCoat,
+            bogSprayIntensity = if (world.mudBogLevel > 0.1f || world.tyreSlipRatio > 0.35f) (world.tyreSlipRatio * 0.8f).coerceIn(0f, 1f) else 0f,
+            timeSec = timeSec
         )
 
         // 9.5 Mechanical Tractor-Trolley Coupling Joint (Clevis Hook + Tow Eye + Steel Hitch Pin + Safety Chain)
@@ -313,7 +313,7 @@ object WorldRenderer {
     ) {
         val w = size.width
         val h = size.height
-        val ppm = (h / 4.3f).coerceIn(38f, 92f)
+        val ppm = (h / 3.6f).coerceIn(48f, 112f)
 
         drawRect(
             brush = Brush.verticalGradient(
@@ -339,15 +339,7 @@ object WorldRenderer {
         val tractorCenterX = if (trailer == TrailerType.NONE) w * 0.52f else w * 0.67f
         val tractorCenterY = groundY - (tractor.rearWheelRadius + 0.31f + idleBob) * ppm
 
-        drawOval(
-            brush = Brush.radialGradient(
-                colors = listOf(Color.Black.copy(alpha = 0.60f), Color.Transparent),
-                center = Offset(tractorCenterX, groundY),
-                radius = 2.0f * ppm
-            ),
-            topLeft = Offset(tractorCenterX - 2.0f * ppm, groundY - 0.2f * ppm),
-            size = Size(4.0f * ppm, 0.4f * ppm)
-        )
+        drawOval(Color.Black.copy(alpha = 0.42f), Offset(tractorCenterX - 1.9f * ppm, groundY - 0.16f * ppm), Size(3.8f * ppm, 0.32f * ppm))
 
         var previewHitchPos: Offset? = null
         var previewTonguePos: Offset? = null
@@ -366,7 +358,7 @@ object WorldRenderer {
             val tongueLx = trailer.bedLength * 0.50f + 0.68f
             val restTractorY = 0.05f + tractor.rearWheelRadius + restLen
             val restTrailerY = 0.05f + trailer.wheelRadius + restLen
-            val tongueLy = ((restTractorY + hitchLy) - restTrailerY).coerceIn(-0.42f, 0.12f)
+            val tongueLy = ((restTractorY + hitchLy) - restTrailerY).coerceIn(-0.22f, 0.25f)
 
             val trailerCenterX = tractorCenterX + (hitchLx - tongueLx) * ppm
             val trailerCenterY = groundY - (trailer.wheelRadius + 0.31f) * ppm
@@ -437,7 +429,10 @@ object WorldRenderer {
         frontWheelRot: Float,
         driverLean: Float,
         headlightsOn: Boolean,
-        ppm: Float
+        ppm: Float,
+        mudCoat: Float = 0f,
+        bogSprayIntensity: Float = 0f,
+        timeSec: Float = 0f
     ) {
         val m = metricsFor(tractor)
         val deg = (-angleRad * 180f / PI.toFloat())
@@ -445,7 +440,6 @@ object WorldRenderer {
         val rearX = -wb * 0.44f
         val frontX = wb * 0.54f
 
-        // Match exact level axle vertical geometry from PhysicsWorld!
         val rearAnchorY = 0.05f * ppm
         val frontAnchorY = (0.05f + (tractor.rearWheelRadius - tractor.frontWheelRadius)) * ppm
         val rearWheelY = rearAnchorY + rearComp * ppm
@@ -454,81 +448,42 @@ object WorldRenderer {
         val spriteW = (frontX - rearX) / (m.frontAxleNx - m.rearAxleNx)
         val spriteH = spriteW * (assets.body.height.toFloat() / assets.body.width.toFloat())
         val spriteLeft = rearX - m.rearAxleNx * spriteW
-        // Center body sprite vertically using average axle rest offset so suspension moves smoothly around it
         val bodySuspOffset = ((rearComp - 0.26f) + (frontComp - 0.26f)) * 0.5f * ppm
         val spriteTop = (rearAnchorY + 0.26f * ppm + bodySuspOffset) - m.rearAxleNy * spriteH
+
+        val seatScreen = Offset(spriteLeft + m.seatNx * spriteW, spriteTop + m.seatNy * spriteH)
+        val footScreen = Offset(spriteLeft + m.footNx * spriteW, spriteTop + m.footNy * spriteH)
+        val gripScreen = Offset(spriteLeft + m.gripNx * spriteW, spriteTop + m.gripNy * spriteH)
 
         withTransform({
             translate(centerScreen.x, centerScreen.y)
             rotate(degrees = deg, pivot = Offset.Zero)
         }) {
-            // 1. Suspension Coil Struts
-            drawLine(
-                color = Color(0xFF32363B),
-                start = Offset(rearX, rearAnchorY),
-                end = Offset(rearX, rearWheelY),
-                strokeWidth = ppm * 0.11f,
-                cap = StrokeCap.Round
-            )
-            drawLine(
-                color = Color(0xFF42484F),
-                start = Offset(frontX, frontAnchorY),
-                end = Offset(frontX, frontWheelY),
-                strokeWidth = ppm * 0.09f,
-                cap = StrokeCap.Round
-            )
+            // 1. Suspension Coil Struts & Mechanical Footstep Link
+            drawLine(Color(0xFF32363B), Offset(rearX, rearAnchorY), Offset(rearX, rearWheelY), strokeWidth = ppm * 0.11f, cap = StrokeCap.Round)
+            drawLine(Color(0xFF42484F), Offset(frontX, frontAnchorY), Offset(frontX, frontWheelY), strokeWidth = ppm * 0.09f, cap = StrokeCap.Round)
 
-            // 2A. Seated Driver Back Layer (legs inside cockpit & far arm reaching steering wheel)
-            val seatScreen = Offset(spriteLeft + m.seatNx * spriteW, spriteTop + m.seatNy * spriteH)
-            val gripScreen = Offset(spriteLeft + m.gripNx * spriteW, spriteTop + m.gripNy * spriteH)
+            // 2. Driver Legs & Far Arm drawn FIRST behind wheels & tractor chassis/mudguards
+            // Foot lands cleanly in the tractor footwell ahead of the rear wheel arch, NEVER outside or over top of tyres!
             drawRealisticDriverLegs(
                 driver = driver,
                 seatPos = seatScreen,
+                footPos = footScreen,
                 wheelGripPos = gripScreen,
                 leanRad = driverLean,
                 ppm = ppm
             )
 
-            // 3. Realistic High-Detail Tractor Body Sprite
-            drawImage(
-                image = assets.body,
-                srcOffset = IntOffset.Zero,
-                srcSize = IntSize(assets.body.width, assets.body.height),
-                dstOffset = IntOffset(spriteLeft.roundToInt(), spriteTop.roundToInt()),
-                dstSize = IntSize(spriteW.roundToInt(), spriteH.roundToInt())
+            // 3. Dark matte inner fender-well liner + Rotating Concentric Rear & Front Lug Wheels (behind opaque mudguards!)
+            val rearLinerRad = tractor.rearWheelRadius * ppm * 1.045f
+            drawArc(
+                color = Color(0xFF15181C),
+                startAngle = 188f,
+                sweepAngle = 164f,
+                useCenter = true,
+                topLeft = Offset(rearX - rearLinerRad, rearWheelY - rearLinerRad),
+                size = Size(rearLinerRad * 2f, rearLinerRad * 2f)
             )
-
-            // 3B. Seated Driver Upper Layer (torso, belt, collar, real face, rolled sleeve & hand gripping wheel)
-            drawRealisticDriverUpper(
-                driver = driver,
-                faceBitmap = assets.face,
-                seatPos = seatScreen,
-                wheelGripPos = gripScreen,
-                leanRad = driverLean,
-                hasCanopy = tractor == TractorModel.SONALIKA_750,
-                ppm = ppm
-            )
-
-            // 4. Headlight Cone on Dusk / Rainy Maps
-            if (headlightsOn) {
-                val hlPos = Offset(spriteLeft + m.headlightNx * spriteW, spriteTop + m.headlightNy * spriteH)
-                val cone = Path().apply {
-                    moveTo(hlPos.x, hlPos.y)
-                    lineTo(hlPos.x + 3.4f * ppm, hlPos.y - 0.65f * ppm)
-                    lineTo(hlPos.x + 3.4f * ppm, hlPos.y + 0.85f * ppm)
-                    close()
-                }
-                drawPath(
-                    path = cone,
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(Color(0xFFFFF5C8).copy(alpha = 0.34f), Color.Transparent),
-                        startX = hlPos.x,
-                        endX = hlPos.x + 3.4f * ppm
-                    )
-                )
-            }
-
-            // 5. Rotating Concentric Rear & Front Lug Wheel Sprites
             drawWheelSprite(
                 bitmap = assets.rearWheel,
                 center = Offset(rearX, rearWheelY),
@@ -541,6 +496,83 @@ object WorldRenderer {
                 radius = tractor.frontWheelRadius * ppm * 1.015f,
                 rotationRad = frontWheelRot
             )
+
+            // Subtle rotating lug-nut hub ring highlights on wheels for extra mechanical realism
+            drawCircle(Color(0xFF282D32), tractor.rearWheelRadius * ppm * 0.14f, Offset(rearX, rearWheelY))
+            drawCircle(Color(0xFF9AA3AD), tractor.rearWheelRadius * ppm * 0.07f, Offset(rearX, rearWheelY))
+            drawCircle(Color(0xFF282D32), tractor.frontWheelRadius * ppm * 0.16f, Offset(frontX, frontWheelY))
+            drawCircle(Color(0xFF9AA3AD), tractor.frontWheelRadius * ppm * 0.08f, Offset(frontX, frontWheelY))
+
+            // Dynamic kichad mud churn arc around rear tyre bottom when slipping in mud
+            if (bogSprayIntensity > 0.15f) {
+                val rMud = tractor.rearWheelRadius * ppm
+                val flicker = 0.72f + 0.28f * abs(sin(timeSec * 28f))
+                drawArc(
+                    color = Color(0xFF331D0B).copy(alpha = (0.68f * bogSprayIntensity * flicker).coerceIn(0f, 0.85f)),
+                    startAngle = 25f,
+                    sweepAngle = 145f,
+                    useCenter = false,
+                    topLeft = Offset(rearX - rMud * 1.03f, rearWheelY - rMud * 1.03f),
+                    size = Size(rMud * 2.06f, rMud * 2.06f),
+                    style = Stroke(width = 0.13f * ppm, cap = StrokeCap.Round)
+                )
+            }
+
+            // 4. Solid Opaque High-Detail Tractor Body Sprite (mudguards & footwell guard cover thighs & wheel tops cleanly!)
+            drawImage(
+                image = assets.body,
+                srcOffset = IntOffset.Zero,
+                srcSize = IntSize(assets.body.width, assets.body.height),
+                dstOffset = IntOffset(spriteLeft.roundToInt(), spriteTop.roundToInt()),
+                dstSize = IntSize(spriteW.roundToInt(), spriteH.roundToInt())
+            )
+
+            // Kichad Mud Splatter Coating on Mudguard Lip & Lower Chassis when driving through mud
+            if (mudCoat > 0.08f) {
+                val splatterCol = Color(0xFF38210E).copy(alpha = (mudCoat * 0.78f).coerceIn(0f, 0.80f))
+                val rM = tractor.rearWheelRadius * ppm
+                for (sp in 0..4) {
+                    val sx = rearX - rM * (0.35f + sp * 0.16f)
+                    val sy = rearWheelY - rM * (0.28f - sp * 0.12f)
+                    drawCircle(splatterCol, radius = (0.045f + (sp % 2) * 0.025f) * ppm, center = Offset(sx, sy))
+                }
+            }
+
+            // Mechanical Tractor Detailing: Rear Rubber Mudflap + Reflector + Tail-Lamp Glow + Headlight Glass
+            val flapX = spriteLeft + (m.rearAxleNx - 0.145f) * spriteW
+            val flapTopY = spriteTop + (m.rearAxleNy + 0.03f) * spriteH
+            drawRect(Color(0xFF16191D), Offset(flapX - 0.045f * ppm, flapTopY), Size(0.085f * ppm, 0.24f * ppm))
+            drawRect(Color(0xFFD92B2B), Offset(flapX - 0.030f * ppm, flapTopY + 0.14f * ppm), Size(0.055f * ppm, 0.055f * ppm))
+
+            val rearLampPos = Offset(spriteLeft + m.rearLampNx * spriteW, spriteTop + m.rearLampNy * spriteH)
+            drawCircle(Color(0xFFE53935).copy(alpha = 0.55f), 0.075f * ppm, rearLampPos)
+            drawCircle(Color(0xFFFF8A65), 0.035f * ppm, rearLampPos)
+
+            // Steering wheel spoke detail right at grip position
+            drawLine(Color(0xFF1A1D21), Offset(gripScreen.x - 0.05f * ppm, gripScreen.y + 0.08f * ppm), Offset(gripScreen.x + 0.04f * ppm, gripScreen.y - 0.03f * ppm), strokeWidth = 0.042f * ppm, cap = StrokeCap.Round)
+
+            // 5. Seated Side-View Driver Upper Layer (profile torso, belt, collar, side-view face & ear, near arm gripping wheel)
+            drawRealisticDriverUpper(
+                driver = driver,
+                faceBitmap = assets.face,
+                seatPos = seatScreen,
+                wheelGripPos = gripScreen,
+                leanRad = driverLean,
+                hasCanopy = tractor == TractorModel.SONALIKA_750,
+                ppm = ppm
+            )
+
+            // 6. Headlight Glow & Beam Cone on Dusk / Rainy Maps
+            val hlPos = Offset(spriteLeft + m.headlightNx * spriteW, spriteTop + m.headlightNy * spriteH)
+            drawCircle(Color(0xFFFFF8D6).copy(alpha = if (headlightsOn) 0.72f else 0.22f), 0.07f * ppm, hlPos)
+            if (headlightsOn) {
+                conePath.reset()
+                conePath.moveTo(hlPos.x, hlPos.y)
+                conePath.lineTo(hlPos.x + 3.4f * ppm, hlPos.y - 0.65f * ppm)
+                conePath.lineTo(hlPos.x + 3.4f * ppm, hlPos.y + 0.85f * ppm)
+                conePath.close()
+                drawPath(conePath, Color(0xFFFFF5C8).copy(alpha = 0.22f))
+            }
         }
     }
 
@@ -551,7 +583,6 @@ object WorldRenderer {
         rotationRad: Float
     ) {
         val deg = rotationRad * 180f / PI.toFloat()
-        // Keep even pixel size so -sizePx/2 aligns exactly with rotation pivot Offset.Zero
         val rawPx = (radius * 2f).roundToInt().coerceAtLeast(8)
         val sizePx = if (rawPx % 2 == 0) rawPx else rawPx + 1
         withTransform({
@@ -571,51 +602,59 @@ object WorldRenderer {
     private fun DrawScope.drawRealisticDriverLegs(
         driver: DriverCharacter,
         seatPos: Offset,
+        footPos: Offset,
         wheelGripPos: Offset,
         leanRad: Float,
         ppm: Float
     ) {
         val leanDeg = leanRad * 180f / PI.toFloat()
         val pantsShadow = Color(
-            red = driver.pantsColor.red * 0.65f,
-            green = driver.pantsColor.green * 0.65f,
-            blue = driver.pantsColor.blue * 0.65f
+            red = driver.pantsColor.red * 0.62f,
+            green = driver.pantsColor.green * 0.62f,
+            blue = driver.pantsColor.blue * 0.62f
         )
         val farShirt = Color(
-            red = driver.shirtPrimary.red * 0.62f,
-            green = driver.shirtPrimary.green * 0.62f,
-            blue = driver.shirtPrimary.blue * 0.62f
+            red = driver.shirtPrimary.red * 0.60f,
+            green = driver.shirtPrimary.green * 0.60f,
+            blue = driver.shirtPrimary.blue * 0.60f
         )
+
+        // Exact cockpit knee & footwell coordinates relative to seat (keeps shins & boots ahead of rear wheel!)
+        val rawFootDx = footPos.x - seatPos.x
+        val rawFootDy = footPos.y - seatPos.y
+        val kneeOffset = Offset(rawFootDx * 0.72f, rawFootDy * 0.14f)
+        val ankleOffset = Offset(rawFootDx * 0.94f, rawFootDy * 0.96f)
+
         withTransform({
             translate(seatPos.x, seatPos.y)
-            rotate(leanDeg * 0.5f, pivot = Offset.Zero)
+            rotate(leanDeg * 0.35f, pivot = Offset.Zero)
         }) {
-            // Far leg & boot (subtle depth silhouette)
-            drawLine(pantsShadow, Offset(0.03f * ppm, 0.04f * ppm), Offset(0.32f * ppm, 0.11f * ppm), strokeWidth = 0.17f * ppm, cap = StrokeCap.Round)
-            drawLine(pantsShadow, Offset(0.32f * ppm, 0.11f * ppm), Offset(0.41f * ppm, 0.36f * ppm), strokeWidth = 0.15f * ppm, cap = StrokeCap.Round)
+            // Far leg angled into opposite clutch pedal inside footwell
+            drawLine(pantsShadow, Offset(0.03f * ppm, 0.03f * ppm), Offset(kneeOffset.x + 0.05f * ppm, kneeOffset.y - 0.02f * ppm), strokeWidth = 0.145f * ppm, cap = StrokeCap.Round)
+            drawLine(pantsShadow, Offset(kneeOffset.x + 0.05f * ppm, kneeOffset.y - 0.02f * ppm), Offset(ankleOffset.x + 0.06f * ppm, ankleOffset.y - 0.02f * ppm), strokeWidth = 0.130f * ppm, cap = StrokeCap.Round)
 
-            // Near thigh & shin resting toward tractor footboard pedals
-            drawLine(driver.pantsColor, Offset(0.01f * ppm, 0.03f * ppm), Offset(0.28f * ppm, 0.12f * ppm), strokeWidth = 0.19f * ppm, cap = StrokeCap.Round)
-            drawLine(driver.pantsColor, Offset(0.28f * ppm, 0.12f * ppm), Offset(0.36f * ppm, 0.37f * ppm), strokeWidth = 0.16f * ppm, cap = StrokeCap.Round)
-            // Denim seam highlight
-            drawLine(Color.White.copy(alpha = 0.16f), Offset(0.05f * ppm, 0.00f), Offset(0.26f * ppm, 0.08f * ppm), strokeWidth = 0.025f * ppm, cap = StrokeCap.Round)
-            // Work boot on footrest pedal
+            // Near thigh & shin tucked naturally inside tractor seat & footwell ahead of rear tyre
+            drawLine(driver.pantsColor, Offset(-0.02f * ppm, 0.03f * ppm), kneeOffset, strokeWidth = 0.170f * ppm, cap = StrokeCap.Round)
+            drawLine(driver.pantsColor, kneeOffset, ankleOffset, strokeWidth = 0.145f * ppm, cap = StrokeCap.Round)
+            drawLine(Color.White.copy(alpha = 0.16f), Offset(0.04f * ppm, 0.00f), Offset(kneeOffset.x * 0.85f, kneeOffset.y - 0.02f * ppm), strokeWidth = 0.022f * ppm, cap = StrokeCap.Round)
+
+            // Work boot resting squarely inside tractor footboard pedal
             drawRoundRect(
-                color = Color(0xFF2B2118),
-                topLeft = Offset(0.30f * ppm, 0.34f * ppm),
-                size = Size(0.18f * ppm, 0.09f * ppm),
-                cornerRadius = CornerRadius(0.035f * ppm)
+                color = Color(0xFF281E15),
+                topLeft = Offset(ankleOffset.x - 0.04f * ppm, ankleOffset.y - 0.02f * ppm),
+                size = Size(0.165f * ppm, 0.085f * ppm),
+                cornerRadius = CornerRadius(0.032f * ppm)
             )
-            drawLine(Color(0xFF4B3A2A), Offset(0.31f * ppm, 0.42f * ppm), Offset(0.47f * ppm, 0.42f * ppm), strokeWidth = 0.022f * ppm)
+            drawLine(Color(0xFF4B3A2A), Offset(ankleOffset.x - 0.03f * ppm, ankleOffset.y + 0.060f * ppm), Offset(ankleOffset.x + 0.12f * ppm, ankleOffset.y + 0.060f * ppm), strokeWidth = 0.020f * ppm)
 
-            // Far (left) arm reaching to far side of steering wheel rim
+            // Far (left) arm reaching forward to grip left side of steering wheel rim
             val gx = wheelGripPos.x - seatPos.x + 0.05f * ppm
             val gy = wheelGripPos.y - seatPos.y - 0.03f * ppm
-            val fElbowX = gx * 0.52f + 0.04f * ppm
-            val fElbowY = gy * 0.46f + 0.07f * ppm
-            drawLine(farShirt, Offset(0.07f * ppm, -0.33f * ppm), Offset(fElbowX, fElbowY), strokeWidth = 0.11f * ppm, cap = StrokeCap.Round)
-            drawLine(Color(0xFFA77555), Offset(fElbowX, fElbowY), Offset(gx, gy), strokeWidth = 0.085f * ppm, cap = StrokeCap.Round)
-            drawCircle(Color(0xFF9C6B4C), 0.052f * ppm, Offset(gx, gy))
+            val fShoulder = Offset(0.06f * ppm, -0.34f * ppm)
+            val fElbow = Offset(gx * 0.50f + 0.04f * ppm, gy * 0.42f + 0.08f * ppm)
+            drawLine(farShirt, fShoulder, fElbow, strokeWidth = 0.11f * ppm, cap = StrokeCap.Round)
+            drawLine(Color(0xFFA77555), fElbow, Offset(gx, gy), strokeWidth = 0.082f * ppm, cap = StrokeCap.Round)
+            drawCircle(Color(0xFF9C6B4C), 0.050f * ppm, Offset(gx, gy))
         }
     }
 
@@ -628,11 +667,11 @@ object WorldRenderer {
         hasCanopy: Boolean,
         ppm: Float
     ) {
-        val leanDeg = leanRad * 180f / PI.toFloat() + 6f
+        val leanDeg = leanRad * 180f / PI.toFloat() + 12f
         val shirtDark = Color(
-            red = driver.shirtPrimary.red * 0.74f,
-            green = driver.shirtPrimary.green * 0.74f,
-            blue = driver.shirtPrimary.blue * 0.74f
+            red = driver.shirtPrimary.red * 0.70f,
+            green = driver.shirtPrimary.green * 0.70f,
+            blue = driver.shirtPrimary.blue * 0.70f
         )
         val scale = if (hasCanopy) 0.84f else 0.94f
         withTransform({
@@ -640,105 +679,120 @@ object WorldRenderer {
             rotate(leanDeg, pivot = Offset.Zero)
             scale(scale, scale, pivot = Offset.Zero)
         }) {
-            // Hip / lower jeans waistband & leather belt with brass buckle
+            // Side-view seated hip/pelvis resting directly on seat cushion + leather belt
             drawRoundRect(
                 color = driver.pantsColor,
                 topLeft = Offset(-0.13f * ppm, -0.02f * ppm),
-                size = Size(0.28f * ppm, 0.12f * ppm),
+                size = Size(0.23f * ppm, 0.10f * ppm),
                 cornerRadius = CornerRadius(0.05f * ppm)
             )
-            drawRect(Color(0xFF3E2614), Offset(-0.13f * ppm, -0.025f * ppm), Size(0.27f * ppm, 0.045f * ppm))
-            drawRect(Color(0xFFD2A343), Offset(0.07f * ppm, -0.025f * ppm), Size(0.045f * ppm, 0.045f * ppm))
+            drawRect(Color(0xFF3E2614), Offset(-0.13f * ppm, -0.028f * ppm), Size(0.22f * ppm, 0.040f * ppm))
+            drawRect(Color(0xFFD2A343), Offset(0.055f * ppm, -0.028f * ppm), Size(0.036f * ppm, 0.040f * ppm))
 
-            // Contoured shirt torso with natural driving slouch & fold shading
-            val torso = Path().apply {
-                moveTo(-0.14f * ppm, -0.01f * ppm)
-                lineTo(-0.17f * ppm, -0.40f * ppm)
-                quadraticTo(0.01f * ppm, -0.49f * ppm, 0.15f * ppm, -0.39f * ppm)
-                lineTo(0.14f * ppm, -0.01f * ppm)
-                close()
-            }
-            drawPath(
-                path = torso,
-                brush = Brush.horizontalGradient(
-                    colors = listOf(shirtDark, driver.shirtPrimary, shirtDark),
-                    startX = -0.17f * ppm,
-                    endX = 0.15f * ppm
-                )
-            )
-            // Shirt button placket & chest pocket
-            drawLine(driver.shirtAccent, Offset(0.055f * ppm, -0.43f * ppm), Offset(0.065f * ppm, -0.03f * ppm), strokeWidth = 0.028f * ppm)
+            // True side-profile shirt torso (curved spine on left -X, chest & button placket along +X)
+            torsoPath.reset()
+            torsoPath.moveTo(-0.12f * ppm, -0.01f * ppm)
+            torsoPath.quadraticTo(-0.17f * ppm, -0.22f * ppm, -0.13f * ppm, -0.39f * ppm)
+            torsoPath.quadraticTo(-0.02f * ppm, -0.49f * ppm, 0.10f * ppm, -0.40f * ppm)
+            torsoPath.quadraticTo(0.14f * ppm, -0.20f * ppm, 0.10f * ppm, -0.01f * ppm)
+            torsoPath.close()
+            drawPath(torsoPath, driver.shirtPrimary)
+            // Back shadow fold along spine side
+            drawLine(shirtDark.copy(alpha = 0.55f), Offset(-0.11f * ppm, -0.05f * ppm), Offset(-0.12f * ppm, -0.36f * ppm), strokeWidth = 0.055f * ppm, cap = StrokeCap.Round)
+            // Front button seam & pocket
+            drawLine(driver.shirtAccent, Offset(0.095f * ppm, -0.39f * ppm), Offset(0.090f * ppm, -0.03f * ppm), strokeWidth = 0.022f * ppm)
             drawRoundRect(
-                color = shirtDark.copy(alpha = 0.55f),
-                topLeft = Offset(0.075f * ppm, -0.33f * ppm),
-                size = Size(0.065f * ppm, 0.085f * ppm),
+                color = shirtDark.copy(alpha = 0.48f),
+                topLeft = Offset(0.022f * ppm, -0.31f * ppm),
+                size = Size(0.058f * ppm, 0.072f * ppm),
                 cornerRadius = CornerRadius(0.012f * ppm)
             )
-            // Shirt collar
-            val collar = Path().apply {
-                moveTo(-0.06f * ppm, -0.44f * ppm)
-                lineTo(0.04f * ppm, -0.37f * ppm)
-                lineTo(0.11f * ppm, -0.43f * ppm)
-                lineTo(0.03f * ppm, -0.47f * ppm)
-                close()
-            }
-            drawPath(collar, driver.shirtPrimary)
-            drawPath(collar, shirtDark.copy(alpha = 0.55f), style = Stroke(width = 1.8f))
 
-            // Sculpted neck + chin shadow
+            // Side-view collar
+            collarPath.reset()
+            collarPath.moveTo(-0.07f * ppm, -0.44f * ppm)
+            collarPath.lineTo(0.04f * ppm, -0.37f * ppm)
+            collarPath.lineTo(0.11f * ppm, -0.41f * ppm)
+            collarPath.lineTo(0.03f * ppm, -0.47f * ppm)
+            collarPath.close()
+            drawPath(collarPath, driver.shirtPrimary)
+            drawPath(collarPath, shirtDark.copy(alpha = 0.55f), style = Stroke(width = 1.6f))
+
+            // Neck angled forward toward road (+X)
             drawRoundRect(
                 color = Color(0xFFC28E6B),
-                topLeft = Offset(-0.04f * ppm, -0.54f * ppm),
-                size = Size(0.11f * ppm, 0.13f * ppm),
+                topLeft = Offset(-0.020f * ppm, -0.54f * ppm),
+                size = Size(0.100f * ppm, 0.13f * ppm),
                 cornerRadius = CornerRadius(0.03f * ppm)
             )
-            drawOval(
-                color = Color(0xFF7B4E33).copy(alpha = 0.42f),
-                topLeft = Offset(-0.03f * ppm, -0.53f * ppm),
-                size = Size(0.10f * ppm, 0.06f * ppm)
-            )
 
-            // Head & Hair silhouette + seamlessly integrated real driver face
-            val headCenter = Offset(0.02f * ppm, -0.66f * ppm)
-            val headRad = 0.185f * ppm
-            // Natural dark hair cap behind/above head oval
-            drawOval(
-                color = Color(0xFF1F1A17),
-                topLeft = Offset(headCenter.x - headRad * 1.04f, headCenter.y - headRad * 1.14f),
-                size = Size(headRad * 2.02f, headRad * 1.85f)
-            )
+            // True Side-View Head Silhouette: contoured back skull + cropped 3/4-profile face facing +X + prominent side ear & hair crown!
+            val headCenter = Offset(0.055f * ppm, -0.66f * ppm)
+            val headRx = 0.145f * ppm
+            val headRy = 0.185f * ppm
+
+            // Back-of-head & nape hair contour (-X skull)
+            backHairPath.reset()
+            backHairPath.moveTo(headCenter.x - headRx * 0.30f, headCenter.y + headRy * 0.72f)
+            backHairPath.quadraticTo(headCenter.x - headRx * 1.45f, headCenter.y + headRy * 0.25f, headCenter.x - headRx * 1.25f, headCenter.y - headRy * 0.55f)
+            backHairPath.quadraticTo(headCenter.x - headRx * 0.40f, headCenter.y - headRy * 1.22f, headCenter.x + headRx * 0.85f, headCenter.y - headRy * 0.85f)
+            backHairPath.quadraticTo(headCenter.x + headRx * 0.35f, headCenter.y - headRy * 0.45f, headCenter.x - headRx * 0.15f, headCenter.y - headRy * 0.25f)
+            backHairPath.close()
+            drawPath(backHairPath, Color(0xFF1A1512))
+
             if (faceBitmap != null) {
-                val ovalPath = Path().apply {
-                    addOval(
-                        Rect(
-                            headCenter.x - headRad,
-                            headCenter.y - headRad * 1.06f,
-                            headCenter.x + headRad,
-                            headCenter.y + headRad * 1.06f
-                        )
+                // Crop tight interior face region (skipping background walls/sky corners) and bias toward forward-facing right half!
+                val fw = faceBitmap.width
+                val fh = faceBitmap.height
+                val srcOff = IntOffset((fw * 0.26f).roundToInt(), (fh * 0.14f).roundToInt())
+                val srcSz = IntSize((fw * 0.56f).roundToInt(), (fh * 0.76f).roundToInt())
+
+                faceOvalPath.reset()
+                faceOvalPath.addOval(
+                    Rect(
+                        headCenter.x - headRx * 0.65f,
+                        headCenter.y - headRy * 0.96f,
+                        headCenter.x + headRx * 1.12f,
+                        headCenter.y + headRy * 0.98f
                     )
-                }
-                clipPath(ovalPath) {
+                )
+                clipPath(faceOvalPath) {
+                    // Draw shifted forward so the nose/eye/jaw align naturally looking ahead (+X)
                     drawImage(
                         image = faceBitmap,
-                        srcOffset = IntOffset.Zero,
-                        srcSize = IntSize(faceBitmap.width, faceBitmap.height),
-                        dstOffset = IntOffset((headCenter.x - headRad).roundToInt(), (headCenter.y - headRad * 1.06f).roundToInt()),
-                        dstSize = IntSize((headRad * 2f).roundToInt(), (headRad * 2.12f).roundToInt())
+                        srcOffset = srcOff,
+                        srcSize = srcSz,
+                        dstOffset = IntOffset((headCenter.x - headRx * 0.85f).roundToInt(), (headCenter.y - headRy * 0.98f).roundToInt()),
+                        dstSize = IntSize((headRx * 2.02f).roundToInt(), (headRy * 1.98f).roundToInt())
                     )
                 }
             } else {
-                drawCircle(Color(0xFFC9936F), headRad, headCenter)
+                drawOval(
+                    color = Color(0xFFC9936F),
+                    topLeft = Offset(headCenter.x - headRx * 0.65f, headCenter.y - headRy * 0.96f),
+                    size = Size(headRx * 1.77f, headRy * 1.94f)
+                )
             }
-            // Subtle warm rim shadow instead of cartoon black outline
+
+            // Crisp sideburn + contoured side-profile ear blending back skull to cheek
+            drawRoundRect(
+                color = Color(0xFF1A1512),
+                topLeft = Offset(headCenter.x - headRx * 0.82f, headCenter.y - headRy * 0.42f),
+                size = Size(headRx * 0.42f, headRy * 0.55f),
+                cornerRadius = CornerRadius(0.025f * ppm)
+            )
             drawOval(
-                color = Color(0xFF4A3122).copy(alpha = 0.38f),
-                topLeft = Offset(headCenter.x - headRad, headCenter.y - headRad * 1.06f),
-                size = Size(headRad * 2f, headRad * 2.12f),
-                style = Stroke(width = 1.6f)
+                color = Color(0xFFC7906C),
+                topLeft = Offset(headCenter.x - headRx * 0.72f, headCenter.y - headRy * 0.10f),
+                size = Size(headRx * 0.36f, headRy * 0.46f)
+            )
+            drawOval(
+                color = Color(0xFF8C5A3B).copy(alpha = 0.52f),
+                topLeft = Offset(headCenter.x - headRx * 0.64f, headCenter.y + headRy * 0.02f),
+                size = Size(headRx * 0.20f, headRy * 0.26f)
             )
 
-            // Near (right) arm with rolled-up sleeve, wristwatch & contoured hand gripping steering wheel
+            // Near (right) arm in true side profile: rolled-up sleeve from shoulder -> bent elbow -> hand on steering wheel
             val rawGx = (wheelGripPos.x - seatPos.x) / scale
             val rawGy = (wheelGripPos.y - seatPos.y) / scale
             val invLeanRad = -leanDeg * (PI.toFloat() / 180f)
@@ -746,24 +800,21 @@ object WorldRenderer {
             val sinL = sin(invLeanRad)
             val gx = rawGx * cosL - rawGy * sinL
             val gy = rawGx * sinL + rawGy * cosL
-            val shoulder = Offset(0.02f * ppm, -0.35f * ppm)
-            val elbow = Offset(gx * 0.46f - 0.02f * ppm, gy * 0.42f + 0.09f * ppm)
-            // Upper sleeve + folded cuff
-            drawLine(driver.shirtPrimary, shoulder, elbow, strokeWidth = 0.135f * ppm, cap = StrokeCap.Round)
-            drawCircle(shirtDark, 0.068f * ppm, shoulder)
-            drawCircle(driver.shirtAccent.copy(alpha = 0.65f), 0.062f * ppm, elbow)
-            // Forearm & metallic watch/kada near wrist
-            drawLine(Color(0xFFC8926E), elbow, Offset(gx, gy), strokeWidth = 0.092f * ppm, cap = StrokeCap.Round)
+            val shoulder = Offset(-0.01f * ppm, -0.35f * ppm)
+            val elbow = Offset(gx * 0.48f - 0.02f * ppm, gy * 0.40f + 0.11f * ppm)
+            drawLine(driver.shirtPrimary, shoulder, elbow, strokeWidth = 0.130f * ppm, cap = StrokeCap.Round)
+            drawCircle(shirtDark, 0.066f * ppm, shoulder)
+            drawCircle(driver.shirtAccent.copy(alpha = 0.65f), 0.058f * ppm, elbow)
+            drawLine(Color(0xFFC8926E), elbow, Offset(gx, gy), strokeWidth = 0.088f * ppm, cap = StrokeCap.Round)
             val wristX = elbow.x + (gx - elbow.x) * 0.80f
             val wristY = elbow.y + (gy - elbow.y) * 0.80f
-            drawCircle(Color(0xFFD6DCE2), 0.048f * ppm, Offset(wristX, wristY))
-            // Contoured hand & fingers wrapped on steering wheel rim
+            drawCircle(Color(0xFFD6DCE2), 0.045f * ppm, Offset(wristX, wristY))
             drawOval(
                 color = Color(0xFFB9805B),
-                topLeft = Offset(gx - 0.068f * ppm, gy - 0.055f * ppm),
-                size = Size(0.136f * ppm, 0.11f * ppm)
+                topLeft = Offset(gx - 0.064f * ppm, gy - 0.050f * ppm),
+                size = Size(0.128f * ppm, 0.102f * ppm)
             )
-            drawCircle(Color(0xFF9C6846), 0.042f * ppm, Offset(gx + 0.025f * ppm, gy + 0.01f * ppm))
+            drawCircle(Color(0xFF9C6846), 0.038f * ppm, Offset(gx + 0.025f * ppm, gy + 0.01f * ppm))
         }
     }
 
@@ -791,43 +842,64 @@ object WorldRenderer {
             translate(centerScreen.x, centerScreen.y)
             rotate(deg, pivot = Offset.Zero)
         }) {
-            // Heavy-Duty A-Frame Steel Drawbar (Tow Tongue) extending forward from trailer chassis to hitch eye
+            // Completely straight horizontal Heavy-Duty Steel Drawbar (Tow Tongue) directly into raised tractor hook!
             val tongueEnd = Offset(tongueLocalX * ppm, -tongueLocalY * ppm)
-            val lowerRoot = Offset(len * 0.40f, -0.02f * ppm)
-            val upperBraceRoot = Offset(len * 0.47f, -0.20f * ppm)
-            val neckMid = Offset(tongueEnd.x - 0.16f * ppm, tongueEnd.y)
+            val lowerRoot = Offset(len * 0.42f, tongueEnd.y)
+            val upperBraceRoot = Offset(len * 0.48f, -0.22f * ppm)
+            val neckMid = Offset(tongueEnd.x - 0.18f * ppm, tongueEnd.y)
 
-            // Triangular steel gusset web inside the A-frame fork
-            val gusset = Path().apply {
-                moveTo(lowerRoot.x, lowerRoot.y)
-                lineTo(upperBraceRoot.x, upperBraceRoot.y)
-                lineTo(neckMid.x, neckMid.y)
-                close()
-            }
-            drawPath(gusset, Color(0xFF23272D))
+            drawLine(Color(0xFF1F2329), Offset(len * 0.45f, -0.04f * ppm), lowerRoot, strokeWidth = 0.11f * ppm, cap = StrokeCap.Round)
 
-            // Main lower C-channel drawbar arm + upper diagonal brace + bright steel edge highlight
+            gussetPath.reset()
+            gussetPath.moveTo(lowerRoot.x, lowerRoot.y)
+            gussetPath.lineTo(upperBraceRoot.x, upperBraceRoot.y)
+            gussetPath.lineTo(neckMid.x, neckMid.y)
+            gussetPath.close()
+            drawPath(gussetPath, Color(0xFF23272D))
+
+            // Main straight horizontal lower C-channel drawbar arm + diagonal upper brace + bright steel highlight
             drawLine(Color(0xFF16181C), lowerRoot, tongueEnd, strokeWidth = 0.135f * ppm, cap = StrokeCap.Round)
             drawLine(Color(0xFF454C56), lowerRoot, tongueEnd, strokeWidth = 0.075f * ppm, cap = StrokeCap.Round)
             drawLine(Color(0xFF1E2228), upperBraceRoot, neckMid, strokeWidth = 0.105f * ppm, cap = StrokeCap.Round)
             drawLine(Color(0xFF535B66), upperBraceRoot, neckMid, strokeWidth = 0.048f * ppm, cap = StrokeCap.Round)
 
-            // Tucked parking prop stand under the drawbar
-            val standTop = Offset(len * 0.50f + 0.16f * ppm, tongueEnd.y * 0.55f + 0.02f * ppm)
+            // Hydraulic hose running neatly along drawbar neck into trailer underbody
+            drawLine(Color(0xFF0E1012), Offset(len * 0.46f, -0.08f * ppm), Offset(tongueEnd.x - 0.06f * ppm, tongueEnd.y - 0.045f * ppm), strokeWidth = 0.025f * ppm)
+
+            // Tucked parking prop stand under the straight drawbar
+            val standTop = Offset(len * 0.50f + 0.16f * ppm, tongueEnd.y + 0.02f * ppm)
             val standFoot = Offset(standTop.x - 0.12f * ppm, standTop.y + 0.15f * ppm)
             drawLine(Color(0xFF2D3138), standTop, standFoot, strokeWidth = 0.06f * ppm, cap = StrokeCap.Round)
             drawLine(Color(0xFF69727D), Offset(standFoot.x - 0.06f * ppm, standFoot.y), Offset(standFoot.x + 0.06f * ppm, standFoot.y), strokeWidth = 0.045f * ppm, cap = StrokeCap.Round)
 
-            // Leaf-spring axle hanger & chassis C-channel
-            drawLine(Color(0xFF3A3F45), Offset(wheelX, -0.05f * ppm), Offset(wheelX, wheelY), strokeWidth = 0.12f * ppm, cap = StrokeCap.Round)
+            // Hydraulic tipping ram cylinder housing + leaf-spring suspension hanger & bolts
+            drawLine(Color(0xFF22262C), Offset(0.18f * ppm, 0.02f * ppm), Offset(0.08f * ppm, -0.10f * ppm), strokeWidth = 0.10f * ppm, cap = StrokeCap.Round)
             if (dumpAngleRad > 0.02f) {
-                drawLine(Color(0xFFB5BEC7), Offset(0f, -0.06f * ppm), Offset(0.15f * ppm, -0.5f * ppm * dumpAngleRad * 2f), strokeWidth = 0.09f * ppm)
+                drawLine(Color(0xFFC8D0D8), Offset(0.12f * ppm, -0.06f * ppm), Offset(0.24f * ppm, -0.5f * ppm * dumpAngleRad * 2f), strokeWidth = 0.085f * ppm)
             }
-            drawRect(
-                brush = Brush.verticalGradient(listOf(Color(0xFF454B52), Color(0xFF1A1D21))),
-                topLeft = Offset(-len * 0.48f, -0.11f * ppm),
-                size = Size(len * 1.02f, 0.14f * ppm)
+            // Leaf-spring shackle & axle strut
+            drawLine(Color(0xFF3A3F45), Offset(wheelX - 0.25f * ppm, -0.04f * ppm), Offset(wheelX + 0.25f * ppm, -0.04f * ppm), strokeWidth = 0.055f * ppm, cap = StrokeCap.Round)
+            drawLine(Color(0xFF2E3339), Offset(wheelX, -0.04f * ppm), Offset(wheelX, wheelY), strokeWidth = 0.12f * ppm, cap = StrokeCap.Round)
+
+            // Steel C-channel trailer chassis beam + rivet/bolt line + rear mudflap
+            drawRect(Color(0xFF1D2126), Offset(-len * 0.48f, -0.11f * ppm), Size(len * 1.02f, 0.14f * ppm))
+            drawRect(Color(0xFF454B52), Offset(-len * 0.48f, -0.11f * ppm), Size(len * 1.02f, 0.055f * ppm))
+            for (b in 0..5) {
+                val bx = -len * 0.40f + b * (len * 0.16f)
+                drawCircle(Color(0xFF98A0AA), 0.018f * ppm, Offset(bx, -0.05f * ppm))
+            }
+            // Trolley wheel protective steel mudguard arch & rubber mudflap
+            val trRad = trailer.wheelRadius * ppm
+            drawArc(
+                color = Color(0xFF202429),
+                startAngle = 195f,
+                sweepAngle = 150f,
+                useCenter = false,
+                topLeft = Offset(wheelX - trRad * 1.12f, wheelY - trRad * 1.12f),
+                size = Size(trRad * 2.24f, trRad * 2.24f),
+                style = Stroke(width = 0.065f * ppm, cap = StrokeCap.Round)
             )
+            drawRect(Color(0xFF14171A), Offset(wheelX - trRad * 1.16f, wheelY - 0.04f * ppm), Size(0.08f * ppm, 0.24f * ppm))
 
             // Tiltable Steel Cargo Bed with Lower Solid Sideboard + Open Top Cage so ALL Cargo is Clearly Visible!
             val dumpDeg = -dumpAngleRad * 180f / PI.toFloat()
@@ -837,18 +909,15 @@ object WorldRenderer {
                 val lowerWallH = bedH * 0.46f
                 val floorY = -0.12f * ppm
 
-                // Back bed interior panel (dark shadow behind cargo)
                 drawRect(Color(0xFF17181A), Offset(-len * 0.47f, floorY - bedH * 0.90f), Size(len * 0.94f, bedH * 0.90f))
 
-                // Continuous piled mound under pieces (for ALL cargos, especially visible soil/sand/crops heap!)
                 val hasActiveCargo = pieces.any { !it.spilled } && cargo != CargoType.NONE
                 if (hasActiveCargo) {
-                    val heap = Path().apply {
-                        moveTo(-len * 0.46f, floorY)
-                        quadraticTo(-len * 0.24f, floorY - bedH * 1.48f, 0f, floorY - bedH * 1.58f)
-                        quadraticTo(len * 0.24f, floorY - bedH * 1.42f, len * 0.46f, floorY)
-                        close()
-                    }
+                    heapPath.reset()
+                    heapPath.moveTo(-len * 0.46f, floorY)
+                    heapPath.quadraticTo(-len * 0.24f, floorY - bedH * 1.48f, 0f, floorY - bedH * 1.58f)
+                    heapPath.quadraticTo(len * 0.24f, floorY - bedH * 1.42f, len * 0.46f, floorY)
+                    heapPath.close()
                     val (topCol, botCol) = when (cargo) {
                         CargoType.SAND -> Color(0xFFE5C887) to Color(0xFF9C7E40)
                         CargoType.SOIL -> Color(0xFF7D512B) to Color(0xFF3E2612)
@@ -858,10 +927,10 @@ object WorldRenderer {
                         CargoType.STONES -> Color(0xFF737A82) to Color(0xFF3B3F44)
                         CargoType.NONE -> Color.Transparent to Color.Transparent
                     }
-                    drawPath(heap, Brush.verticalGradient(listOf(topCol, botCol)))
+                    drawPath(heapPath, botCol)
+                    drawRect(topCol.copy(alpha = 0.45f), Offset(-len * 0.30f, floorY - bedH * 1.32f), Size(len * 0.60f, bedH * 0.36f))
                 }
 
-                // Individual bouncing/shifting cargo items clearly visible inside the open top half & heaped above rim!
                 for (p in pieces) {
                     if (p.spilled) continue
                     val px = p.lx * ppm
@@ -869,42 +938,48 @@ object WorldRenderer {
                     drawRealisticCargoPiece(cargo, Offset(px, py), p.angle, ppm)
                 }
 
-                // Half-height Solid Steel Lower Sideboard (leaves upper 54% of cargo open to view!)
                 val darkBody = Color(
                     red = trailer.bodyColor.red * 0.56f,
                     green = trailer.bodyColor.green * 0.56f,
                     blue = trailer.bodyColor.blue * 0.56f
                 )
                 drawRoundRect(
-                    brush = Brush.verticalGradient(listOf(trailer.bodyColor, darkBody)),
+                    color = darkBody,
                     topLeft = Offset(-len * 0.50f, floorY - lowerWallH),
                     size = Size(len, lowerWallH),
                     cornerRadius = CornerRadius(0.03f * ppm)
                 )
+                drawRect(
+                    color = trailer.bodyColor,
+                    topLeft = Offset(-len * 0.50f, floorY - lowerWallH),
+                    size = Size(len, lowerWallH * 0.62f)
+                )
 
-                // Open Steel Vertical Stake Ribs + Top Frame Rail (shows cargo clearly through the cage!)
+                // Welded steel vertical stake ribs with top & bottom bolts
                 for (r in 0..4) {
                     val rx = -len * 0.46f + r * (len * 0.22f)
-                    drawRect(
-                        brush = Brush.horizontalGradient(listOf(trailer.accentColor, darkBody)),
-                        topLeft = Offset(rx, floorY - bedH),
-                        size = Size(0.065f * ppm, bedH)
-                    )
+                    drawRect(darkBody, Offset(rx, floorY - bedH), Size(0.065f * ppm, bedH))
+                    drawRect(trailer.accentColor, Offset(rx + 0.01f * ppm, floorY - bedH), Size(0.028f * ppm, bedH))
+                    drawCircle(Color(0xFFD0D6DE), 0.014f * ppm, Offset(rx + 0.032f * ppm, floorY - bedH + 0.035f * ppm))
                 }
-                // Mid horizontal cage bar & top rail
                 drawRect(trailer.bodyColor, Offset(-len * 0.51f, floorY - bedH * 0.74f), Size(len * 1.02f, 0.045f * ppm))
                 drawRect(Color(0xFF1E2226), Offset(-len * 0.52f, floorY - bedH), Size(len * 1.04f, 0.065f * ppm))
-                // Rear safety reflector strip
-                drawRect(Color(0xFFE03A2E), Offset(-len * 0.50f, floorY - lowerWallH * 0.75f), Size(0.06f * ppm, lowerWallH * 0.35f))
+
+                // Rear tail-light & amber side marker reflectors
+                drawRect(Color(0xFFE03A2E), Offset(-len * 0.50f, floorY - lowerWallH * 0.75f), Size(0.065f * ppm, lowerWallH * 0.38f))
+                drawRect(Color(0xFFFFB300), Offset(len * 0.42f, floorY - lowerWallH * 0.65f), Size(0.055f * ppm, 0.045f * ppm))
+                drawRect(Color(0xFFFFB300), Offset(0f, floorY - lowerWallH * 0.65f), Size(0.055f * ppm, 0.045f * ppm))
             }
 
-            // Real Photographic 9.00-16 Agricultural Trolley Tyre cleanly below chassis
+            // Real Photographic 9.00-16 Agricultural Trolley Tyre + Hub Cap
             drawWheelSprite(
                 bitmap = trailerWheel,
                 center = Offset(wheelX, wheelY),
                 radius = trailer.wheelRadius * ppm * 1.015f,
                 rotationRad = wheelRot
             )
+            drawCircle(Color(0xFF282D32), trailer.wheelRadius * ppm * 0.16f, Offset(wheelX, wheelY))
+            drawCircle(Color(0xFFAAB2BC), trailer.wheelRadius * ppm * 0.08f, Offset(wheelX, wheelY))
         }
     }
 
@@ -922,7 +997,7 @@ object WorldRenderer {
             (hitchScreen.y + tongueScreen.y) * 0.5f
         )
 
-        // 1. Slack Steel Safety Chain under the coupling (prevents uncoupling on steep climbs)
+        // 1. Slack Steel Safety Chain under the coupling
         val chainStart = Offset(
             hitchScreen.x + cos(tractorAngleRad) * (0.16f * ppm) + sin(tractorAngleRad) * (0.05f * ppm),
             hitchScreen.y - sin(tractorAngleRad) * (0.16f * ppm) + cos(tractorAngleRad) * (0.05f * ppm)
@@ -949,59 +1024,24 @@ object WorldRenderer {
             )
         }
 
-        // 2. Forged Tractor Rear Hitch Bracket + Lower Clevis Plate (rotates with tractor body)
+        // 2. Forged Tractor Rear Hitch Bracket + Lower Clevis Plate
         withTransform({
             translate(hitchScreen.x, hitchScreen.y)
             rotate(tractorDeg, pivot = Offset.Zero)
         }) {
-            // Tractor heavy drawbar arm extending from rear tyre center hub level to clevis fork
-            drawLine(
-                color = Color(0xFF1A1D22),
-                start = Offset(0.46f * ppm, 0f),
-                end = Offset(0f, 0f),
-                strokeWidth = 0.115f * ppm,
-                cap = StrokeCap.Round
-            )
-            drawLine(
-                color = Color(0xFF535B66),
-                start = Offset(0.42f * ppm, -0.022f * ppm),
-                end = Offset(0.02f * ppm, -0.022f * ppm),
-                strokeWidth = 0.028f * ppm,
-                cap = StrokeCap.Round
-            )
-            // Lower clevis jaw plate
-            drawRoundRect(
-                brush = Brush.verticalGradient(listOf(Color(0xFF474E58), Color(0xFF1F2329))),
-                topLeft = Offset(-0.10f * ppm, 0.026f * ppm),
-                size = Size(0.22f * ppm, 0.044f * ppm),
-                cornerRadius = CornerRadius(0.018f * ppm)
-            )
+            drawLine(Color(0xFF1A1D22), Offset(0.46f * ppm, 0f), Offset(0f, 0f), strokeWidth = 0.115f * ppm, cap = StrokeCap.Round)
+            drawLine(Color(0xFF535B66), Offset(0.42f * ppm, -0.022f * ppm), Offset(0.02f * ppm, -0.022f * ppm), strokeWidth = 0.028f * ppm, cap = StrokeCap.Round)
+            drawRoundRect(Color(0xFF2B3038), Offset(-0.10f * ppm, 0.026f * ppm), Size(0.22f * ppm, 0.044f * ppm), CornerRadius(0.018f * ppm))
         }
 
-        // 3. Trailer Drawbar Neck Collar + Forged Tow-Eye Ring (rotates independently with trailer!)
+        // 3. Trailer Drawbar Neck Collar + Forged Tow-Eye Ring
         withTransform({
             translate(tongueScreen.x, tongueScreen.y)
             rotate(trailerDeg, pivot = Offset.Zero)
         }) {
-            // Heavy welded neck sleeve connecting A-frame to tow-eye
-            drawRoundRect(
-                brush = Brush.verticalGradient(listOf(Color(0xFF626A75), Color(0xFF282D34))),
-                topLeft = Offset(-0.20f * ppm, -0.052f * ppm),
-                size = Size(0.16f * ppm, 0.104f * ppm),
-                cornerRadius = CornerRadius(0.025f * ppm)
-            )
-            // Forged steel tow-eye ring sandwiched inside the clevis slot
-            drawCircle(
-                color = Color(0xFF1E2228),
-                radius = 0.078f * ppm,
-                center = Offset.Zero
-            )
-            drawCircle(
-                color = Color(0xFF7D8794),
-                radius = 0.058f * ppm,
-                center = Offset.Zero,
-                style = Stroke(width = 0.028f * ppm)
-            )
+            drawRoundRect(Color(0xFF424852), Offset(-0.20f * ppm, -0.052f * ppm), Size(0.16f * ppm, 0.104f * ppm), CornerRadius(0.025f * ppm))
+            drawCircle(Color(0xFF1E2228), radius = 0.078f * ppm, center = Offset.Zero)
+            drawCircle(Color(0xFF7D8794), radius = 0.058f * ppm, center = Offset.Zero, style = Stroke(width = 0.028f * ppm))
         }
 
         // 4. Upper Tractor Clevis Jaw Plate
@@ -1009,46 +1049,19 @@ object WorldRenderer {
             translate(hitchScreen.x, hitchScreen.y)
             rotate(tractorDeg, pivot = Offset.Zero)
         }) {
-            drawRoundRect(
-                brush = Brush.verticalGradient(listOf(Color(0xFF5A626D), Color(0xFF252930))),
-                topLeft = Offset(-0.10f * ppm, -0.070f * ppm),
-                size = Size(0.22f * ppm, 0.044f * ppm),
-                cornerRadius = CornerRadius(0.018f * ppm)
-            )
+            drawRoundRect(Color(0xFF464D57), Offset(-0.10f * ppm, -0.070f * ppm), Size(0.22f * ppm, 0.044f * ppm), CornerRadius(0.018f * ppm))
         }
 
-        // 5. Heavy Vertical Steel Locking Pin ("Killa") + Bright Safety Handle + Bottom Cotter Clip
+        // 5. Heavy Vertical Steel Locking Pin ("Killa") + Orange Safety Handle + Bottom Cotter Clip
         withTransform({
             translate(pinCenter.x, pinCenter.y)
             rotate((tractorDeg + trailerDeg) * 0.5f, pivot = Offset.Zero)
         }) {
-            // Vertical machined steel pin shaft through upper clevis -> tow-eye -> lower clevis
-            drawRoundRect(
-                brush = Brush.horizontalGradient(listOf(Color(0xFF6B737D), Color(0xFFD2DAE3), Color(0xFF454B54))),
-                topLeft = Offset(-0.026f * ppm, -0.135f * ppm),
-                size = Size(0.052f * ppm, 0.255f * ppm),
-                cornerRadius = CornerRadius(0.015f * ppm)
-            )
-            // Red/amber painted pin pull-handle loop at top so driver/player spots the joint clearly
-            drawRoundRect(
-                brush = Brush.verticalGradient(listOf(Color(0xFFFF8A33), Color(0xFFC43B16))),
-                topLeft = Offset(-0.068f * ppm, -0.175f * ppm),
-                size = Size(0.136f * ppm, 0.048f * ppm),
-                cornerRadius = CornerRadius(0.022f * ppm)
-            )
-            drawCircle(
-                color = Color(0xFFFFE0B2),
-                radius = 0.014f * ppm,
-                center = Offset(-0.032f * ppm, -0.154f * ppm)
-            )
-            // Bottom steel R-clip / lock cotter pin below lower clevis jaw
-            drawLine(
-                color = Color(0xFFE0B43A),
-                start = Offset(-0.048f * ppm, 0.095f * ppm),
-                end = Offset(0.052f * ppm, 0.095f * ppm),
-                strokeWidth = 0.022f * ppm,
-                cap = StrokeCap.Round
-            )
+            drawRoundRect(Color(0xFF6B737D), Offset(-0.026f * ppm, -0.135f * ppm), Size(0.052f * ppm, 0.255f * ppm), CornerRadius(0.015f * ppm))
+            drawRect(Color(0xFFD2DAE3), Offset(-0.012f * ppm, -0.130f * ppm), Size(0.020f * ppm, 0.245f * ppm))
+            drawRoundRect(Color(0xFFE65C1C), Offset(-0.068f * ppm, -0.175f * ppm), Size(0.136f * ppm, 0.048f * ppm), CornerRadius(0.022f * ppm))
+            drawCircle(Color(0xFFFFE0B2), 0.014f * ppm, Offset(-0.032f * ppm, -0.154f * ppm))
+            drawLine(Color(0xFFE0B43A), Offset(-0.048f * ppm, 0.095f * ppm), Offset(0.052f * ppm, 0.095f * ppm), strokeWidth = 0.022f * ppm, cap = StrokeCap.Round)
         }
     }
 
@@ -1059,35 +1072,31 @@ object WorldRenderer {
         }) {
             when (cargo) {
                 CargoType.CROPS -> {
-                    drawOval(Brush.verticalGradient(listOf(Color(0xFFDDA835), Color(0xFF8A6314))), Offset(-0.25f * ppm, -0.15f * ppm), Size(0.50f * ppm, 0.30f * ppm))
+                    drawOval(Color(0xFFB58622), Offset(-0.25f * ppm, -0.15f * ppm), Size(0.50f * ppm, 0.30f * ppm))
+                    drawOval(Color(0xFFE0AC38), Offset(-0.21f * ppm, -0.13f * ppm), Size(0.42f * ppm, 0.16f * ppm))
                     drawLine(Color(0xFF345E24), Offset(-0.18f * ppm, 0f), Offset(0.18f * ppm, 0f), strokeWidth = 0.04f * ppm)
                 }
-                CargoType.SOIL -> drawCircle(Color(0xFF4E3016).copy(alpha = 0.6f), 0.11f * ppm, Offset.Zero)
-                CargoType.SAND -> drawCircle(Color(0xFFC2A05C).copy(alpha = 0.55f), 0.10f * ppm, Offset.Zero)
+                CargoType.SOIL -> drawCircle(Color(0xFF4E3016).copy(alpha = 0.65f), 0.11f * ppm, Offset.Zero)
+                CargoType.SAND -> drawCircle(Color(0xFFC2A05C).copy(alpha = 0.60f), 0.10f * ppm, Offset.Zero)
                 CargoType.WOOD -> {
-                    drawRoundRect(
-                        brush = Brush.verticalGradient(listOf(Color(0xFF7D4E2A), Color(0xFF3E2411))),
-                        topLeft = Offset(-0.34f * ppm, -0.11f * ppm),
-                        size = Size(0.68f * ppm, 0.22f * ppm),
-                        cornerRadius = CornerRadius(0.09f * ppm)
-                    )
+                    drawRoundRect(Color(0xFF5D381D), Offset(-0.34f * ppm, -0.11f * ppm), Size(0.68f * ppm, 0.22f * ppm), CornerRadius(0.09f * ppm))
+                    drawRect(Color(0xFF7D4E2A), Offset(-0.32f * ppm, -0.09f * ppm), Size(0.62f * ppm, 0.08f * ppm))
                     drawCircle(Color(0xFFC29769), 0.085f * ppm, Offset(0.28f * ppm, 0f))
                 }
                 CargoType.BRICKS -> {
-                    drawRect(Brush.verticalGradient(listOf(Color(0xFFB34229), Color(0xFF6E2110))), Offset(-0.22f * ppm, -0.11f * ppm), Size(0.44f * ppm, 0.22f * ppm))
+                    drawRect(Color(0xFF9C341D), Offset(-0.22f * ppm, -0.11f * ppm), Size(0.44f * ppm, 0.22f * ppm))
                     drawRect(Color(0xFF331109), Offset(-0.22f * ppm, -0.11f * ppm), Size(0.44f * ppm, 0.22f * ppm), style = Stroke(2f))
                 }
                 CargoType.STONES -> {
-                    val rock = Path().apply {
-                        moveTo(-0.22f * ppm, 0.10f * ppm)
-                        lineTo(-0.16f * ppm, -0.16f * ppm)
-                        lineTo(0.08f * ppm, -0.20f * ppm)
-                        lineTo(0.24f * ppm, 0.05f * ppm)
-                        lineTo(0.10f * ppm, 0.16f * ppm)
-                        close()
-                    }
-                    drawPath(rock, Brush.verticalGradient(listOf(Color(0xFF838A92), Color(0xFF3F4348))))
-                    drawPath(rock, Color(0xFF232529), style = Stroke(2f, join = StrokeJoin.Round))
+                    rockPath.reset()
+                    rockPath.moveTo(-0.22f * ppm, 0.10f * ppm)
+                    rockPath.lineTo(-0.16f * ppm, -0.16f * ppm)
+                    rockPath.lineTo(0.08f * ppm, -0.20f * ppm)
+                    rockPath.lineTo(0.24f * ppm, 0.05f * ppm)
+                    rockPath.lineTo(0.10f * ppm, 0.16f * ppm)
+                    rockPath.close()
+                    drawPath(rockPath, Color(0xFF6B7178))
+                    drawPath(rockPath, Color(0xFF232529), style = Stroke(2f, join = StrokeJoin.Round))
                 }
                 CargoType.NONE -> Unit
             }
@@ -1096,32 +1105,29 @@ object WorldRenderer {
 
     private fun DrawScope.drawCheckpointFlag(sx: Float, sy: Float, ppm: Float, color: Color) {
         drawRect(Color(0xFFB0B7BF), Offset(sx - ppm * 0.05f, sy - ppm * 2.4f), Size(ppm * 0.10f, ppm * 2.4f))
-        val flag = Path().apply {
-            moveTo(sx + ppm * 0.05f, sy - ppm * 2.4f)
-            lineTo(sx + ppm * 1.15f, sy - ppm * 2.05f)
-            lineTo(sx + ppm * 0.05f, sy - ppm * 1.65f)
-            close()
-        }
-        drawPath(flag, color)
+        flagPath.reset()
+        flagPath.moveTo(sx + ppm * 0.05f, sy - ppm * 2.4f)
+        flagPath.lineTo(sx + ppm * 1.15f, sy - ppm * 2.05f)
+        flagPath.lineTo(sx + ppm * 0.05f, sy - ppm * 1.65f)
+        flagPath.close()
+        drawPath(flagPath, color)
     }
 
     private fun DrawScope.drawCoin(sx: Float, sy: Float, ppm: Float, phase: Float) {
         val squeeze = (0.35f + 0.65f * abs(cos(phase * 2.2f)))
         val rx = ppm * 0.22f * squeeze
         val ry = ppm * 0.22f
+        drawCircle(Color(0xFFFFD54F).copy(alpha = 0.20f), ppm * 0.30f, Offset(sx, sy))
         drawOval(Color(0xFF9E6100), Offset(sx - rx, sy - ry), Size(rx * 2f, ry * 2f))
-        drawOval(Color(0xFFE6B43A), Offset(sx - rx * 0.76f, sy - ry * 0.76f), Size(rx * 1.52f, ry * 1.52f))
+        drawOval(Color(0xFFE6B43A), Offset(sx - rx * 0.78f, sy - ry * 0.78f), Size(rx * 1.56f, ry * 1.56f))
+        drawOval(Color(0xFFFFF3B0).copy(alpha = 0.65f), Offset(sx - rx * 0.45f, sy - ry * 0.55f), Size(rx * 0.75f, ry * 0.52f))
     }
 
     private fun DrawScope.drawFuelCan(sx: Float, sy: Float, ppm: Float) {
         val w = ppm * 0.54f
         val h = ppm * 0.66f
-        drawRoundRect(
-            brush = Brush.verticalGradient(listOf(Color(0xFF208A42), Color(0xFF105425))),
-            topLeft = Offset(sx - w * 0.5f, sy - h * 0.5f),
-            size = Size(w, h),
-            cornerRadius = CornerRadius(ppm * 0.07f)
-        )
+        drawCircle(Color(0xFF4CAF50).copy(alpha = 0.18f), ppm * 0.44f, Offset(sx, sy))
+        drawRoundRect(Color(0xFF166B31), Offset(sx - w * 0.5f, sy - h * 0.5f), Size(w, h), CornerRadius(ppm * 0.07f))
         drawRoundRect(Color(0xFFD8E0DA), Offset(sx - w * 0.5f, sy - h * 0.5f), Size(w, h), CornerRadius(ppm * 0.07f), style = Stroke(2f))
         drawRect(Color(0xFFD68E1E), Offset(sx + w * 0.1f, sy - h * 0.64f), Size(w * 0.24f, h * 0.17f))
         drawRect(Color.White, Offset(sx - w * 0.20f, sy - h * 0.06f), Size(w * 0.40f, h * 0.12f))

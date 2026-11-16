@@ -231,9 +231,9 @@ enum class CargoType(
 enum class SurfaceType(val baseGrip: Float, val rollingDrag: Float) {
     DIRT(0.95f, 0.015f),
     ASPHALT(1.12f, 0.009f),
-    MUD(0.58f, 0.036f),
-    SAND(0.68f, 0.032f),
-    WET(0.74f, 0.020f),
+    MUD(0.45f, 0.072f),
+    SAND(0.62f, 0.042f),
+    WET(0.66f, 0.030f),
     ROCK(0.88f, 0.022f)
 }
 
@@ -270,9 +270,9 @@ enum class MapEnvironment(
         roadTopColor = Color(0xFFB57B48),
         groundFillColor = Color(0xFF5D3D22),
         primarySurface = SurfaceType.DIRT,
-        hillAmplitude = 3.2f,
-        bumpiness = 0.55f,
-        mudChance = 0.14f,
+        hillAmplitude = 3.8f,
+        bumpiness = 0.72f,
+        mudChance = 0.24f,
         propTheme = "village"
     ),
     FARMING_FIELDS(
@@ -288,9 +288,9 @@ enum class MapEnvironment(
         roadTopColor = Color(0xFF8C5E35),
         groundFillColor = Color(0xFF432A15),
         primarySurface = SurfaceType.DIRT,
-        hillAmplitude = 2.8f,
-        bumpiness = 0.65f,
-        mudChance = 0.22f,
+        hillAmplitude = 3.5f,
+        bumpiness = 0.80f,
+        mudChance = 0.30f,
         propTheme = "farm"
     ),
     INDIAN_BAZAAR(
