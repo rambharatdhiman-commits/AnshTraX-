@@ -196,39 +196,89 @@ class SoundEngine(context: Context? = null) {
     fun start() {
         if (running) return
         running = true
-        val minBuf = AudioTrack.getMinBufferSize(
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        ).coerceAtLeast(4096)
-
-        val track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_GAME)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build()
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(SAMPLE_RATE)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build()
-            )
-            .setBufferSizeInBytes(minBuf * 2)
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .build()
-
-        audioTrack = track
-        track.play()
 
         audioThread = Thread({
-            runSynthesisLoop(track)
+            val track = createSafeAudioTrack()
+            if (track == null) {
+                running = false
+                return@Thread
+            }
+            audioTrack = track
+            try {
+                runSynthesisLoop(track)
+            } catch (_: Throwable) {
+            } finally {
+                running = false
+                try {
+                    track.pause()
+                    track.flush()
+                    track.release()
+                } catch (_: Throwable) {
+                }
+                if (audioTrack === track) {
+                    audioTrack = null
+                }
+            }
         }, "AnshTraX-Audio").apply {
-            priority = Thread.MAX_PRIORITY
+            runCatching { priority = Thread.MAX_PRIORITY }
             start()
         }
+    }
+
+    private fun createSafeAudioTrack(): AudioTrack? {
+        val rawMinBuf = try {
+            AudioTrack.getMinBufferSize(
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            )
+        } catch (_: Throwable) {
+            AudioTrack.ERROR_BAD_VALUE
+        }
+        val minBuf = if (rawMinBuf > 0) rawMinBuf.coerceAtLeast(4096) else 8192
+
+        val usages = intArrayOf(
+            AudioAttributes.USAGE_GAME,
+            AudioAttributes.USAGE_MEDIA
+        )
+        val contentTypes = intArrayOf(
+            AudioAttributes.CONTENT_TYPE_SONIFICATION,
+            AudioAttributes.CONTENT_TYPE_MUSIC
+        )
+        for (idx in usages.indices) {
+            var candidate: AudioTrack? = null
+            try {
+                candidate = AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(usages[idx])
+                            .setContentType(contentTypes[idx])
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(SAMPLE_RATE)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(minBuf * 2)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build()
+
+                if (candidate.state == AudioTrack.STATE_INITIALIZED) {
+                    candidate.play()
+                    return candidate
+                }
+                candidate.release()
+            } catch (_: Throwable) {
+                try {
+                    candidate?.release()
+                } catch (_: Throwable) {
+                }
+            }
+        }
+        return null
     }
 
     fun playSfx(type: SfxType) {
@@ -248,7 +298,7 @@ class SoundEngine(context: Context? = null) {
             audioTrack?.pause()
             audioTrack?.flush()
             audioTrack?.release()
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
         }
         audioTrack = null
     }
@@ -612,7 +662,14 @@ class SoundEngine(context: Context? = null) {
             }
 
             if (running) {
-                track.write(buffer, 0, chunkSamples)
+                val written = try {
+                    track.write(buffer, 0, chunkSamples)
+                } catch (_: Throwable) {
+                    -1
+                }
+                if (written < 0) {
+                    break
+                }
             }
         }
     }

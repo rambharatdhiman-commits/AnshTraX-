@@ -1,6 +1,7 @@
 package com.example.render
 
 import android.content.res.Resources
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -44,6 +45,31 @@ data class TractorArtAssets(
     val textures: ProceduralTextures
 ) {
     companion object {
+        private fun safeDecodeImageBitmap(resources: Resources, resId: Int): ImageBitmap {
+            val opts = BitmapFactory.Options().apply {
+                inScaled = false
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            val bmp = try {
+                BitmapFactory.decodeResource(resources, resId, opts)
+            } catch (_: Throwable) {
+                null
+            }
+            return (bmp ?: Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)).asImageBitmap()
+        }
+
+        private fun safeDecodeOptionalBitmap(resources: Resources, resId: Int): ImageBitmap? {
+            val opts = BitmapFactory.Options().apply {
+                inScaled = false
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            return try {
+                BitmapFactory.decodeResource(resources, resId, opts)?.asImageBitmap()
+            } catch (_: Throwable) {
+                null
+            }
+        }
+
         fun load(resources: Resources, tractor: TractorModel, driver: DriverCharacter): TractorArtAssets {
             val (bodyId, rearId, frontId) = when (tractor) {
                 TractorModel.EICHER_241 -> Triple(R.drawable.body_eicher, R.drawable.wheel_eicher_rear, R.drawable.wheel_eicher_front)
@@ -51,11 +77,11 @@ data class TractorArtAssets(
                 TractorModel.SONALIKA_750 -> Triple(R.drawable.body_sonalika, R.drawable.wheel_sonalika_rear, R.drawable.wheel_sonalika_front)
             }
             return TractorArtAssets(
-                body = BitmapFactory.decodeResource(resources, bodyId).asImageBitmap(),
-                rearWheel = BitmapFactory.decodeResource(resources, rearId).asImageBitmap(),
-                frontWheel = BitmapFactory.decodeResource(resources, frontId).asImageBitmap(),
-                trailerWheel = BitmapFactory.decodeResource(resources, R.drawable.wheel_trailer).asImageBitmap(),
-                face = BitmapFactory.decodeResource(resources, driver.faceDrawable)?.asImageBitmap(),
+                body = safeDecodeImageBitmap(resources, bodyId),
+                rearWheel = safeDecodeImageBitmap(resources, rearId),
+                frontWheel = safeDecodeImageBitmap(resources, frontId),
+                trailerWheel = safeDecodeImageBitmap(resources, R.drawable.wheel_trailer),
+                face = safeDecodeOptionalBitmap(resources, driver.faceDrawable),
                 textures = ProceduralTextures()
             )
         }

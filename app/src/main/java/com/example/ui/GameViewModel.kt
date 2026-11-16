@@ -49,10 +49,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     init {
         soundEngine.start()
         viewModelScope.launch {
-            val loaded = repo.progressFlow.first()
-            _progress.value = loaded
-            soundEngine.musicEnabled = loaded.musicEnabled
-            soundEngine.sfxEnabled = loaded.sfxEnabled
+            runCatching {
+                val loaded = repo.progressFlow.first()
+                _progress.value = loaded
+                soundEngine.musicEnabled = loaded.musicEnabled
+                soundEngine.sfxEnabled = loaded.sfxEnabled
+            }
         }
     }
 
@@ -60,7 +62,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val updated = transform(_progress.value)
         _progress.value = updated
         viewModelScope.launch {
-            repo.saveProgress(updated)
+            runCatching { repo.saveProgress(updated) }
         }
     }
 

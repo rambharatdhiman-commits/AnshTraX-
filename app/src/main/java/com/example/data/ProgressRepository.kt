@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
@@ -18,6 +19,7 @@ import com.example.model.TractorUpgrades
 import com.example.model.TrailerType
 import com.example.model.UpgradeType
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
 
@@ -43,7 +45,9 @@ class ProgressRepository(private val context: Context) {
         val SFX_ENABLED = booleanPreferencesKey("sfx_enabled")
     }
 
-    val progressFlow: Flow<PlayerProgress> = context.dataStore.data.map { prefs ->
+    val progressFlow: Flow<PlayerProgress> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { prefs ->
         val default = PlayerProgress()
         val tractorId = prefs[Keys.SELECTED_TRACTOR] ?: default.selectedTractor.id
         val driverId = prefs[Keys.SELECTED_DRIVER] ?: default.selectedDriver.id

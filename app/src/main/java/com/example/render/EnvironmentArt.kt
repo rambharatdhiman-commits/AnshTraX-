@@ -41,6 +41,7 @@ object EnvironmentArt {
     private var cachedSunRad: Float = 1f
 
     private fun ensureCachedBrushes(map: MapEnvironment, w: Float, h: Float) {
+        if (w <= 1f || h <= 1f) return
         val key = (map.ordinal.toLong() shl 40) xor (w.toInt().toLong() shl 20) xor h.toInt().toLong()
         if (key == cachedKey && cachedSkyBrush != null) return
         cachedKey = key
@@ -60,7 +61,7 @@ object EnvironmentArt {
         )
         val sunPos = Offset(w * 0.77f, h * (if (map.isNightOrDusk) 0.34f else 0.21f))
         cachedSunCenter = sunPos
-        cachedSunRad = h * 0.38f
+        cachedSunRad = (h * 0.38f).coerceAtLeast(1f)
         cachedSunBrush = Brush.radialGradient(
             colors = listOf(
                 Color(0xFFFFF8DC).copy(alpha = 0.92f),
@@ -108,6 +109,7 @@ object EnvironmentArt {
         h: Float,
         timeSec: Float
     ) {
+        if (w <= 1f || h <= 1f) return
         ensureCachedBrushes(map, w, h)
         cachedSkyBrush?.let { drawRect(brush = it, size = size) }
 
